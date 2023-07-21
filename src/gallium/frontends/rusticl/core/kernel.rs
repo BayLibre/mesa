@@ -137,6 +137,7 @@ enum CompiledKernelArgType {
     WorkDim,
     WorkGroupOffsets,
     NumWorkgroups,
+    ProgVar,
 }
 
 #[derive(Hash, PartialEq, Eq, Clone)]
@@ -288,6 +289,7 @@ impl CompiledKernelArg {
                         blob_write_uint8(blob, 10);
                         blob_write_uint32(blob, idx as u32)
                     }
+                    CompiledKernelArgType::ProgVar => blob_write_uint8(blob, 11),
                 };
             }
         }
@@ -322,6 +324,7 @@ impl CompiledKernelArg {
                         let idx = blob_read_uint32(blob) as usize;
                         CompiledKernelArgType::APIArg(idx)
                     }
+                    11 => CompiledKernelArgType::ProgVar,
                     _ => return None,
                 };
 
@@ -830,6 +833,22 @@ fn compile_nir_variant(
         compute_options.set_has_base_workgroup_id(true);
     }
     nir_pass!(nir, nir_lower_compute_system_values, &compute_options);
+
+    // need to run after first opt loop and remove_dead_variables to get rid of uneccessary scratch
+    // memory
+    nir_pass!(
+        nir,
+        nir_lower_vars_to_explicit_types,
+        nir_variable_mode::nir_var_mem_shared
+            | nir_variable_mode::nir_var_function_temp
+            | nir_variable_mode::nir_var_shader_temp
+            | nir_variable_mode::nir_var_mem_global
+            | nir_variable_mode::nir_var_mem_generic,
+        Some(glsl_get_cl_type_size_align),
+    );
+
+    opt_nir(nir, dev, true);
+
     nir.gather_info();
 
     let mut add_var = |nir: &mut NirShader,
@@ -911,6 +930,15 @@ fn compile_nir_variant(
             c"printf_buffer_addr",
         );
     }
+    if nir.global_mem_size() > 0 {
+        add_var(
+            nir,
+            &mut lower_state.prog_var_loc,
+            CompiledKernelArgType::ProgVar,
+            address_bits_ptr_type,
+            c"prog_var_ptr",
+        )
+    }
 
     if nir.num_images() > 0 || nir.num_textures() > 0 {
         let count = nir.num_images() + nir.num_textures();
@@ -942,17 +970,10 @@ fn compile_nir_variant(
         );
     }
 
-    // need to run after first opt loop and remove_dead_variables to get rid of uneccessary scratch
-    // memory
     nir_pass!(
         nir,
         nir_lower_vars_to_explicit_types,
-        nir_variable_mode::nir_var_mem_shared
-            | nir_variable_mode::nir_var_function_temp
-            | nir_variable_mode::nir_var_shader_temp
-            | nir_variable_mode::nir_var_uniform
-            | nir_variable_mode::nir_var_mem_global
-            | nir_variable_mode::nir_var_mem_generic,
+        nir_variable_mode::nir_var_uniform,
         Some(glsl_get_cl_type_size_align),
     );
 
@@ -965,8 +986,7 @@ fn compile_nir_variant(
     };
 
     // we might have got rid of more function_temp or shared memory
-    nir.reset_scratch_size();
-    nir.reset_shared_size();
+    nir.reset_variable_size();
     nir_pass!(
         nir,
         nir_remove_dead_variables,
@@ -978,6 +998,7 @@ fn compile_nir_variant(
         nir_lower_vars_to_explicit_types,
         nir_variable_mode::nir_var_function_temp
             | nir_variable_mode::nir_var_mem_shared
+            | nir_variable_mode::nir_var_mem_global
             | nir_variable_mode::nir_var_mem_generic,
         Some(glsl_get_cl_type_size_align),
     );
@@ -1174,6 +1195,29 @@ impl SPIRVToNirResult {
     }
 }
 
+/// Extracts the initial content of a prog var from a build per device.
+///
+/// This needs a custom nir pipeline as we are not interesting in any functions (so far), but only
+/// want to extract the global var initializers in a consistent way.
+pub(super) fn create_prog_var(build: &ProgramBuild, dev: &Device) -> Option<NirShader> {
+    let Some(nir) = build.to_prog_var_init(dev) else {
+        return None;
+    };
+
+    let (args, nir) = compile_nir_to_args(dev, nir, &[], &dev.lib_clc);
+    let (default_build, optimized) = compile_nir_remaining(dev, nir, &args, "prog_var_initializer");
+
+    debug_assert!(args.is_empty());
+    debug_assert!(optimized.is_none());
+
+    let nir = default_build.nir;
+    if default_build.compiled_args.is_empty() && nir.global_mem_size() == 0 {
+        None
+    } else {
+        Some(nir)
+    }
+}
+
 pub(super) fn convert_spirv_to_nir(
     build: &ProgramBuild,
     name: &str,
@@ -1329,6 +1373,7 @@ impl Kernel {
         let nir_kernel_builds = Arc::clone(&self.builds[q.device]);
         let mut bdas = self.bdas.lock().unwrap().clone();
         let svms = self.svms.lock().unwrap().clone();
+        let prog_var = self.prog.get_prog_var_for_dev(q.device);
 
         let mut buffer_arcs = HashMap::new();
         let mut image_arcs = HashMap::new();
@@ -1611,6 +1656,16 @@ impl Kernel {
                         input.extend_from_slice(unsafe {
                             as_byte_slice(&[grid[0] as u32, grid[1] as u32, grid[2] as u32])
                         });
+                    }
+                    CompiledKernelArgType::ProgVar => {
+                        assert!(prog_var.is_some());
+                        add_global(
+                            ctx,
+                            &mut input,
+                            &mut resource_info,
+                            prog_var.as_ref().unwrap(),
+                            0,
+                        );
                     }
                 }
             }

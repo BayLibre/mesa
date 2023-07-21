@@ -8,6 +8,8 @@ use crate::impl_cl_type_trait;
 use mesa_rust::compiler::clc::spirv::SPIRVBin;
 use mesa_rust::compiler::clc::*;
 use mesa_rust::compiler::nir::*;
+use mesa_rust::pipe::resource::PipeResource;
+use mesa_rust::pipe::screen::ResourceType;
 use mesa_rust::util::disk_cache::*;
 use mesa_rust_gen::*;
 use rusticl_llvm_gen::*;
@@ -107,6 +109,38 @@ impl ProgramBuild {
     }
 
     fn rebuild_kernels(&mut self, devs: &[&'static Device], is_src: bool) {
+        for dev in devs {
+            let Some(mut prog_var_nir) = create_prog_var(self, dev) else {
+                continue;
+            };
+
+            let prog_var_data = prog_var_nir.extract_global_initializers();
+            if prog_var_data.is_empty() {
+                continue;
+            }
+
+            let d = self.dev_build_mut(dev);
+            let len = prog_var_data.len() as u32;
+
+            let prog_var = dev
+                .screen()
+                .resource_create_buffer(
+                    len,
+                    ResourceType::Normal,
+                    PIPE_BIND_GLOBAL,
+                    PIPE_RESOURCE_FLAG_UNMAPPABLE,
+                )
+                .unwrap();
+
+            dev.helper_ctx()
+                .exec(|ctx| {
+                    ctx.buffer_subdata(&prog_var, 0, prog_var_data.as_ptr().cast(), len);
+                })
+                .wait();
+
+            d.prog_var = Some(prog_var);
+        }
+
         let mut kernels: Vec<_> = self
             .builds
             .values()
@@ -235,6 +269,30 @@ impl ProgramBuild {
     pub fn has_successful_build(&self) -> bool {
         self.builds.values().any(|b| b.is_success())
     }
+
+    pub fn to_prog_var_init(&self, d: &Device) -> Option<NirShader> {
+        let info = self.dev_build(d);
+        if info.status != CL_BUILD_SUCCESS as cl_build_status {
+            return None;
+        }
+
+        let mut log = Platform::dbg().program.then(Vec::new);
+        let nir = info.spirv.as_ref().unwrap().to_prog_var_init(
+            d.screen
+                .nir_shader_compiler_options(pipe_shader_type::PIPE_SHADER_COMPUTE),
+            d.address_bits(),
+            log.as_mut(),
+            &d.spirv_caps,
+        );
+
+        if let Some(log) = log {
+            for line in log {
+                eprintln!("{}", line);
+            }
+        };
+
+        nir
+    }
 }
 
 #[derive(Default)]
@@ -245,6 +303,7 @@ pub struct ProgramDevBuild {
     log: String,
     bin_type: cl_program_binary_type,
     pub kernels: HashMap<String, Arc<NirKernelBuilds>>,
+    prog_var: Option<PipeResource>,
 }
 
 impl ProgramDevBuild {
@@ -785,5 +844,21 @@ impl Program {
         };
 
         lock.spec_constants.insert(spec_id, val);
+    }
+
+    pub fn get_prog_var_for_dev(&self, dev: &Device) -> Option<PipeResource> {
+        self.build_info()
+            .dev_build(dev)
+            .prog_var
+            .as_ref()
+            .map(PipeResource::new_ref)
+    }
+
+    pub fn get_prog_var_size_for_dev(&self, dev: &Device) -> u32 {
+        if let Some(prog_var) = &self.build_info().dev_build(dev).prog_var {
+            prog_var.width()
+        } else {
+            0
+        }
     }
 }
