@@ -5106,7 +5106,8 @@ vtn_handle_entry_point(struct vtn_builder *b, const uint32_t *w,
    vtn_fail_if(stage == MESA_SHADER_NONE,
                "Unsupported execution model: %s (%u)",
                spirv_executionmodel_to_string(w[1]), w[1]);
-   if (strcmp(entry_point->name, b->entry_point_name) != 0 ||
+   if (!b->entry_point_name ||
+       strcmp(entry_point->name, b->entry_point_name) != 0 ||
        stage != b->entry_point_stage)
       return;
 
@@ -7321,6 +7322,7 @@ spirv_to_nir(const uint32_t *words, size_t word_count,
       nir_remove_dead_variables(b->shader, ~(nir_var_function_temp |
                                              nir_var_shader_out |
                                              nir_var_shader_in |
+                                             nir_var_mem_global |
                                              nir_var_system_value),
                                 b->vars_used_indirectly ? &dead_opts : NULL);
    }
@@ -7386,6 +7388,104 @@ spirv_to_nir(const uint32_t *words, size_t word_count,
          }
       }
    }
+
+   /* Unparent the shader from the vtn_builder before we delete the builder */
+   ralloc_steal(NULL, b->shader);
+
+   nir_shader *shader = b->shader;
+   ralloc_free(b);
+
+   return shader;
+}
+
+static bool
+vtn_find_access_chain_spec_op(struct vtn_builder *b, SpvOp opcode,
+                              const uint32_t *w, unsigned count)
+{
+   switch (opcode) {
+   case SpvOpSpecConstantOp: {
+      nir_const_value u32op = nir_const_value_for_uint(w[3], 32);
+      SpvOp opcode = u32op.u32;
+      switch (opcode) {
+      case SpvOpAccessChain:
+      case SpvOpPtrAccessChain:
+      case SpvOpInBoundsAccessChain:
+      case SpvOpInBoundsPtrAccessChain:
+         b->spill_spec_op_to_init = true;
+         break;
+      default:
+         break;
+      }
+      return true;
+   }
+   case SpvOpFunction:
+      /* Exit early once we hit a function declaration */
+      return false;
+   default:
+      return true;
+   }
+}
+
+nir_shader *
+spirv_create_prog_var_init_shader(const uint32_t *words, size_t word_count,
+                                  const struct spirv_to_nir_options *options,
+                                  const nir_shader_compiler_options *nir_options)
+{
+   mesa_spirv_debug_init();
+
+   const uint32_t *word_end = words + word_count;
+
+   struct vtn_builder *b = vtn_create_builder(words, word_count,
+                                              MESA_SHADER_KERNEL, NULL,
+                                              options);
+
+   if (b == NULL)
+      return NULL;
+
+   /* See also _vtn_fail() */
+   if (vtn_setjmp(b->fail_jump)) {
+      ralloc_free(b);
+      return NULL;
+   }
+
+   const char *dump_path = secure_getenv("MESA_SPIRV_DUMP_PATH");
+   if (dump_path)
+      vtn_dump_shader(b, dump_path, "spirv");
+
+   b->shader = nir_shader_create(b, MESA_SHADER_KERNEL, nir_options, NULL);
+   b->shader->info.subgroup_size = options->subgroup_size;
+   b->shader->info.float_controls_execution_mode = options->float_controls_execution_mode;
+   b->shader->info.cs.shader_index = options->shader_index;
+   b->shader->has_debug_info = options->debug_info;
+   _mesa_blake3_compute(words, word_count * sizeof(uint32_t), b->shader->info.source_blake3);
+
+   /* Skip the SPIR-V header, handled at vtn_create_builder */
+   words += 5;
+
+   /* Handle all the preamble instructions */
+   words = vtn_foreach_instruction(b, words, word_end,
+                                   vtn_handle_preamble_instruction);
+
+   /* Create an empty function body. */
+   nir_function *func = nir_function_create(b->shader, "prog_var_initializer");
+   func->is_entrypoint = true;
+   b->nb = nir_builder_at(nir_after_impl(nir_function_impl_create(func)));
+   b->shader->info.internal = true;
+
+   /* Scan for SpecConstantOp AccessChains */
+   vtn_foreach_instruction(b, words, word_end, vtn_find_access_chain_spec_op);
+
+   vtn_fail_if(b->spill_spec_op_to_init,
+               "Access chains in spec constant ops not yet supported!");
+
+   /* Handle all variable, type, and constant instructions */
+   words = vtn_foreach_instruction(b, words, word_end,
+                                   vtn_handle_variable_or_type_instruction);
+
+   nir_validate_shader(b->shader, "after spirv cfg");
+
+   /* Remove all varibles except global ones */
+   nir_remove_dead_variables(b->shader, ~nir_var_mem_global, NULL);
 
    /* Unparent the shader from the vtn_builder before we delete the builder */
    ralloc_steal(NULL, b->shader);
