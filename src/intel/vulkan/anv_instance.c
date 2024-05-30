@@ -126,6 +126,7 @@ static const struct debug_control debug_control[] = {
    { "no-slab",      ANV_DEBUG_NO_SLAB},
    { "desc-dirty",   ANV_DEBUG_DESCRIPTOR_DIRTY},
    { "shader-print", ANV_DEBUG_SHADER_PRINT},
+   { "dgc-dump",     ANV_DEBUG_DGC_DUMP},
    { NULL,    0 }
 };
 
