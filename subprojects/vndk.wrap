@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: CC0-1.0
+
+[wrap-git]
+directory = vndk
+url = https://android.googlesource.com/platform/prebuilts/vndk/v34
+# main
+revision = 930e27bad98e1b51602db2ad98984bf2426b4f21
+depth = 1
+patch_directory = vndk
+
+[provide]
+dependency_names = vndk_libc, vndk_libcpp, libbase, liblog, libcutils, libutils, libhardware, libsystem, libmedia, libui, libsync, libnativewindow, android.hardware.graphics.mapper
