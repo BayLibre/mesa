@@ -250,6 +250,8 @@ vtn_convert_op_src_type(SpvOp opcode)
    case SpvOpUConvert:
    case SpvOpConvertUToF:
    case SpvOpSatConvertUToS:
+   case SpvOpConvertPtrToU:
+   case SpvOpConvertUToPtr:
       return nir_type_uint;
    default:
       unreachable("Unhandled conversion op");
@@ -271,6 +273,8 @@ vtn_convert_op_dst_type(SpvOp opcode)
    case SpvOpUConvert:
    case SpvOpConvertFToU:
    case SpvOpSatConvertSToU:
+   case SpvOpConvertPtrToU:
+   case SpvOpConvertUToPtr:
       return nir_type_uint;
    default:
       unreachable("Unhandled conversion op");
@@ -380,6 +384,8 @@ vtn_nir_alu_op_for_spirv_opcode(struct vtn_builder *b,
    case SpvOpConvertFToS:
    case SpvOpConvertSToF:
    case SpvOpConvertUToF:
+   case SpvOpConvertPtrToU:
+   case SpvOpConvertUToPtr:
    case SpvOpSConvert:
    case SpvOpFConvert: {
       nir_alu_type src_type = vtn_convert_op_src_type(opcode) | src_bit_size;

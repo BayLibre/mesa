@@ -2737,6 +2737,11 @@ vtn_handle_constant(struct vtn_builder *b, SpvOp opcode,
          break;
       }
 
+      case SpvOpBitcast: {
+         vtn_fail("OpBitcast on OpSpecConstantOp not yet supported!");
+         break;
+      }
+
       default: {
          bool swap;
 
@@ -2752,6 +2757,12 @@ vtn_handle_constant(struct vtn_builder *b, SpvOp opcode,
          case SpvOpSConvert:
          case SpvOpFConvert:
          case SpvOpUConvert:
+         case SpvOpConvertSToF:
+         case SpvOpConvertFToS:
+         case SpvOpConvertFToU:
+         case SpvOpConvertUToF:
+         case SpvOpConvertPtrToU:
+         case SpvOpConvertUToPtr:
             /* We have a different source type in a conversion. */
             org_src_type = vtn_get_value_type(b, w[4])->type;
             break;
