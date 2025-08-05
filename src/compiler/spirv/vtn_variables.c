@@ -2328,6 +2328,7 @@ vtn_create_variable(struct vtn_builder *b, struct vtn_value *val,
     * undef.
     */
    if (initializer && !initializer->is_undef_constant) {
+      bool ignore = false;
       switch (storage_class) {
       case SpvStorageClassWorkgroup:
          /* VK_KHR_zero_initialize_workgroup_memory. */
@@ -2369,9 +2370,9 @@ vtn_create_variable(struct vtn_builder *b, struct vtn_value *val,
 
       case SpvStorageClassCrossWorkgroup:
          vtn_assert(b->options->environment == NIR_SPIRV_OPENCL);
-         vtn_fail("Initializer for CrossWorkgroup variable %u "
-                  "not yet supported in Mesa.",
-                  vtn_id_for_value(b, val));
+         /* Ignore initializers if an entry point was given so nothing assumes their content */
+         if (b->entry_point_name)
+            ignore = true;
          break;
 
       default: {
@@ -2396,17 +2397,19 @@ vtn_create_variable(struct vtn_builder *b, struct vtn_value *val,
          }
       }
 
-      switch (initializer->value_type) {
-      case vtn_value_type_constant:
-         var->var->constant_initializer =
-            nir_constant_clone(initializer->constant, var->var);
-         break;
-      case vtn_value_type_pointer:
-         var->var->pointer_initializer = initializer->pointer->var->var;
-         break;
-      default:
-         vtn_fail("SPIR-V variable initializer %u must be constant or pointer",
-                  vtn_id_for_value(b, initializer));
+      if (!ignore) {
+         switch (initializer->value_type) {
+         case vtn_value_type_constant:
+            var->var->constant_initializer =
+               nir_constant_clone(initializer->constant, var->var);
+            break;
+         case vtn_value_type_pointer:
+            var->var->pointer_initializer = initializer->pointer->var->var;
+            break;
+         default:
+            vtn_fail("SPIR-V variable initializer %u must be constant or pointer",
+                     vtn_id_for_value(b, initializer));
+         }
       }
    }
 
@@ -2709,7 +2712,7 @@ vtn_handle_variables(struct vtn_builder *b, SpvOp opcode,
        * SPIR-V 1.4 the interface is only used for I/O variables, so extra
        * variables will still need to be removed later.
        */
-      if (!b->options->create_library &&
+      if (b->entry_point_name && !b->options->create_library &&
           (is_io || (b->version >= 0x10400 && is_global))) {
          if (!bsearch(&w[2], b->interface_ids, b->interface_ids_count, 4, cmp_uint32_t))
             break;

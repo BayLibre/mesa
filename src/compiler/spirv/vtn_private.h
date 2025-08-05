@@ -712,6 +712,11 @@ struct vtn_builder {
    /* when a physical memory model is choosen */
    bool physical_ptrs;
 
+   /* when spec constant ops contain access chains ned to be spilled to an
+    * initialization shader
+    */
+   bool spill_spec_op_to_init;
+
    /* memory model specified by OpMemoryModel */
    unsigned mem_model;
 };

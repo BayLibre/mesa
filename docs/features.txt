@@ -792,7 +792,7 @@ Rusticl Optional OpenCL 2.x Features:
   - clEnqueueSVMMigrateMem                              DONE
   Device-Side Enqueue                                   not started
   Pipes                                                 not started
-  Program Scope Global Variables                        in progress
+  Program Scope Global Variables                        in progress (available with RUSTICL_FEATURES=progvars)
   Non-Uniform Work-groups                               not started
   Images                                                DONE (freedreno, iris, llvmpipe, zink)
   - Read-Write Images                                   DONE

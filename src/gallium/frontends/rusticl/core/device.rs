@@ -668,6 +668,10 @@ impl DeviceBase {
             add_feat(1, 0, 0, "__opencl_c_fp64");
         }
 
+        if Platform::features().prog_var {
+            add_feat(1, 0, 0, "__opencl_c_program_scope_global_variables");
+        }
+
         if self.is_gl_sharing_supported() {
             add_ext(1, 0, 0, "cl_khr_gl_sharing");
         }
@@ -1244,6 +1248,7 @@ impl DeviceBase {
             integer_dot_product: true,
             intel_subgroups: self.intel_subgroups_supported(),
             kernel_clock: self.kernel_clock_supported(),
+            prog_vars: Platform::features().prog_var,
             subgroups: subgroups_supported,
             subgroups_shuffle: subgroups_supported,
             subgroups_shuffle_relative: subgroups_supported,
