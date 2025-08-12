@@ -6,7 +6,7 @@ vk_api_xml = files('registry/vk.xml')
 vulkan_icd_link_args = []
 vulkan_icd_link_depends = []
 
-if with_platform_android
+if with_any_android
   vulkan_icd_symbols = files('vulkan-icd-android-symbols.txt')
   if with_ld_version_script
     vulkan_icd_link_args += ['-Wl,--version-script', join_paths(meson.current_source_dir(), 'vulkan-android.sym')]
@@ -54,7 +54,7 @@ if with_platform_wayland
   vulkan_wsi_deps += dep_wayland_client
   vulkan_wsi_list += '-DVK_USE_PLATFORM_WAYLAND_KHR'
 endif
-if system_has_kms_drm and not with_platform_android
+if system_has_kms_drm and not with_any_android
   vulkan_wsi_deps += [dep_libdrm, dep_display_info]
   vulkan_wsi_list += '-DVK_USE_PLATFORM_DISPLAY_KHR'
 endif
