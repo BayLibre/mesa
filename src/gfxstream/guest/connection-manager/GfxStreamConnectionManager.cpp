@@ -79,7 +79,14 @@ void GfxStreamConnectionManager::resetThreadLocalInstance() {
     }
 
     delete tls;
+
+// The bionic function is: tss_set(tss_t key, void* _Nonnull value).  For some reason,
+// this doesn't allow NULL, even though it works elsewhere.  Though, this code isn't
+// used in the bionic-based Android build anyways, so it not working will have littler
+// functional effect.
+#if DETECT_OS_ANDROID && defined(HAVE_THREAD_CREATE)
     tss_set(gfxstream_connection_manager_tls_key, nullptr);
+#endif
 }
 
 GfxStreamConnectionManager::GfxStreamConnectionManager(GfxStreamTransportType type,

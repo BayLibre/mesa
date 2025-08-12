@@ -8,6 +8,11 @@ files_libplatform_virtgpu_drm = files(
   'DrmSync.cpp',
 )
 
+deps_virtgpu_drm = [dep_libdrm]
+if host_machine.system() == 'android'
+  deps_virtgpu_drm += dep_android
+endif
+
 libplatform_virtgpu_drm = static_library(
    'platform_virtgpu_drm',
    files_libplatform_virtgpu_drm,

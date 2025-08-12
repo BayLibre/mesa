@@ -15,6 +15,10 @@ endif
 #===============#
 gfxstream_guest_args = []
 
+if with_any_android
+  gfxstream_guest_args += '-DANDROID'
+endif
+
 # Our internal guest build
 if host_machine.system() == 'windows'
   gfxstream_guest_args += '-DWINDOWS_GUEST_BUILD'
