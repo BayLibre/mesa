@@ -431,11 +431,13 @@ with_platform_haiku = _platforms.contains('haiku')
 with_platform_windows = _platforms.contains('windows')
 with_platform_macos = _platforms.contains('macos')
 
+with_any_android = host_machine.system() == 'android'
+
 with_glx = get_option('glx')
 if with_glx == 'auto'
   if not with_opengl
     with_glx = 'disabled'
-  elif with_platform_android
+  elif with_any_android
     with_glx = 'disabled'
   elif with_dri
     with_glx = 'dri'
@@ -510,7 +512,7 @@ foreach platform : _platforms
   pre_args += '-DHAVE_@0@_PLATFORM'.format(platform.to_upper())
 endforeach
 
-if with_platform_android and get_option('platform-sdk-version') >= 29
+if with_any_android and get_option('platform-sdk-version') >= 29
   # By default the NDK compiler, at least, emits emutls references instead of
   # ELF TLS, even when building targeting newer API levels.  Make it actually do
   # ELF TLS instead.
@@ -895,20 +897,20 @@ endif
 pre_args += '-DGLAPI_EXPORT_PROTO_ENTRY_POINTS=@0@'.format(with_glapi_export_proto_entry_points.to_int())
 
 with_android_stub = get_option('android-stub')
-if with_android_stub and not with_platform_android
-  error('`-D android-stub=true` makes no sense without `-D platforms=android`')
+if with_android_stub and not with_any_android
+  error('`-D android-stub=true` requires an Android build')
 endif
 
 with_libbacktrace = get_option('android-libbacktrace') \
-  .require(with_platform_android, error_message : '`-D android-libbacktrace=enabled` makes no sense without `-D platforms=android`') \
-  .disable_auto_if(not with_platform_android) \
+  .require(with_any_android, error_message : '`-D android-libbacktrace=enabled` makes no sense without android') \
+  .disable_auto_if(not with_any_android) \
   .allowed()
 
 if with_libbacktrace
   cpp_args += '-DWITH_LIBBACKTRACE'
 endif
 
-if with_platform_android
+if with_any_android
   dep_android_ui = null_dep
   dep_android_mapper4 = null_dep
   if not with_android_stub
@@ -921,13 +923,13 @@ if with_platform_android
     if with_libbacktrace
       dep_android += dependency('backtrace')
     endif
-    if get_option('platform-sdk-version') >= 26
+    if get_option('platform-sdk-version') >= 26 and with_platform_android
       dep_android += dependency('nativewindow')
     endif
-    if get_option('platform-sdk-version') >= 30
+    if get_option('platform-sdk-version') >= 30 and with_platform_android
       dep_android_mapper4 = dependency('android.hardware.graphics.mapper', version : '>= 4.0', required : false)
     endif
-    if get_option('platform-sdk-version') >= 35
+    if get_option('platform-sdk-version') >= 35 and with_platform_android
       dep_android_ui = dependency('ui', required : false)
     endif
   endif
@@ -942,7 +944,7 @@ endif
 # Since we can't detect that, err on the side of caution and disable
 # KCMP by default on Android.
 if get_option('allow-kcmp') \
-    .disable_auto_if(with_platform_android) \
+    .disable_auto_if(with_any_android) \
     .allowed()
   pre_args += '-DALLOW_KCMP'
 endif
@@ -1456,7 +1458,7 @@ endif
 
 with_c11_threads = false
 if cc.has_function('thrd_create', prefix: '#include <threads.h>')
-  if with_platform_android
+  if with_any_android
     # Current only Android's c11 <threads.h> are verified
     pre_args += '-DHAVE_THRD_CREATE'
     with_c11_threads = true
@@ -1613,7 +1615,7 @@ if dep_thread.found()
 endif
 
 with_expat = get_option('expat') \
-  .disable_auto_if(with_platform_android or with_platform_windows) \
+  .disable_auto_if(with_any_android or with_platform_windows) \
   .enable_if(with_intel_tools, error_message : 'Intel tools require expat')
 
 if host_machine.system() == 'darwin'
@@ -1625,7 +1627,7 @@ endif
 
 # We don't require expat on Android or Windows
 use_xmlconfig = get_option('xmlconfig') \
-  .require(not (with_platform_android or with_platform_windows),
+  .require(not (with_any_android or with_platform_windows),
            error_message : 'xmlconfig not available on Android or Windows') \
   .require(dep_expat.found(),
            error_message : 'requires expat') \
@@ -2000,7 +2002,7 @@ else
 endif
 
 _libunwind = get_option('libunwind') \
-  .require(not with_platform_android, error_message : 'Android requires the use of the backtrace library, not libunwind')
+  .require(not with_any_android, error_message : 'Android requires the use of the backtrace library, not libunwind')
 if host_machine.system() == 'darwin'
   dep_unwind = meson.get_compiler('c').find_library('System', required : _libunwind)
 else

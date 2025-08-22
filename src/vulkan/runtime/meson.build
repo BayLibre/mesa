@@ -59,9 +59,14 @@ if dep_libdrm.found()
   vulkan_lite_runtime_deps += dep_libdrm
 endif
 
+if with_any_android
+  vulkan_lite_runtime_files += files('vk_android_hal.c')
+  vulkan_lite_runtime_deps += [dep_android]
+endif
+
 if with_platform_android
   vulkan_lite_runtime_files += files('vk_android.c')
-  vulkan_lite_runtime_deps += [dep_android, idep_u_gralloc]
+  vulkan_lite_runtime_deps += [idep_u_gralloc]
 endif
 
 vk_common_entrypoints = custom_target(
