@@ -1083,7 +1083,8 @@ vk_cmd_build_acceleration_structures(VkCommandBuffer commandBuffer,
 
    struct bvh_batch_state batch_state = {0};
 
-   struct bvh_state *bvh_states = calloc(infoCount, sizeof(struct bvh_state));
+   struct bvh_state *bvh_states = calloc(1, infoCount * (sizeof(struct bvh_state) + args->driver_state_size));
+   uint8_t *driver_states = (uint8_t *)bvh_states + infoCount * sizeof(struct bvh_state);
 
    struct vk_acceleration_structure_build_marker top_marker = {
       .step = VK_ACCELERATION_STRUCTURE_BUILD_STEP_TOP,
@@ -1110,6 +1111,7 @@ vk_cmd_build_acceleration_structures(VkCommandBuffer commandBuffer,
          leaf_node_count += ppBuildRangeInfos[i][j].primitiveCount;
       }
 
+      bvh_states[i].vk.driver_state = driver_states + i * args->driver_state_size;
       vk_acceleration_structure_build_state_init(&bvh_states[i].vk, cmd_buffer->base.device, leaf_node_count,
                                                  pInfos + i, args);
 

@@ -123,6 +123,10 @@ struct vk_acceleration_structure_build_state {
    struct vk_scratch_layout scratch;
    struct vk_build_config config;
    uint32_t accel_struct_size;
+   /* Points to a vk_acceleration_structure_build_args::driver_state_size wide memory reagion
+    * during builds, NULL for acceleration structure size queries.
+    */
+   void *driver_state;
 };
 
 struct vk_acceleration_structure_build_ops {
@@ -152,6 +156,7 @@ struct vk_acceleration_structure_build_args {
    uint32_t subgroup_size;
    uint32_t bvh_bounds_offset;
    uint32_t root_flags_offset;
+   uint32_t driver_state_size; /* Size of vk_acceleration_structure_build_state::driver_state */
    bool propagate_cull_flags;
    bool emit_markers;
    const radix_sort_vk_t *radix_sort;
