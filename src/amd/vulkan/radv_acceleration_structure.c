@@ -254,6 +254,23 @@ radv_get_build_config(VkDevice _device, struct vk_acceleration_structure_build_s
    if (!radv_use_bvh8(pdev))
       offset += bvh_size / 64 * 4;
 
+   uint32_t accel_struct_end_padding = 0;
+   if (radv_use_bvh8(pdev)) {
+      /* Use different offsets to balance the memory bandwidth between multiple channels. This makes sure that the whole
+       * memory bandwith can be used when traversing the top nodes of a BLAS.
+       */
+      uint32_t offset_index = p_atomic_add_return(&device->accel_struct_offset_counter, 1);
+
+      uint32_t num_tcc_blocks = pdev->info.num_tcc_blocks;
+      uint32_t tcc_cache_line_size = pdev->info.tcc_cache_line_size;
+
+      uint32_t padding = (offset_index % num_tcc_blocks) * tcc_cache_line_size;
+      offset += padding;
+
+      uint32_t max_padding = (num_tcc_blocks - 1) * tcc_cache_line_size;
+      accel_struct_end_padding = max_padding - padding;
+   }
+
    /* The BVH and hence bvh_offset needs 64 byte alignment for RT nodes. */
    offset = ALIGN(offset, 64);
    layout->bvh_offset = offset;
@@ -267,6 +284,9 @@ radv_get_build_config(VkDevice _device, struct vk_acceleration_structure_build_s
    layout->internal_nodes_offset = offset;
    /* Factor out the root node. */
    offset += internal_node_size * (internal_count - 1);
+
+   /* Add more padding to keep the acceleration structure deterministic. */
+   offset += accel_struct_end_padding;
 
    state->accel_struct_size = offset;
 }
