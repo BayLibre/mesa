@@ -122,6 +122,7 @@ struct vk_acceleration_structure_build_state {
    uint32_t leaf_node_count;
    struct vk_scratch_layout scratch;
    struct vk_build_config config;
+   uint32_t accel_struct_size;
 };
 
 struct vk_acceleration_structure_build_ops {
@@ -132,7 +133,6 @@ struct vk_acceleration_structure_build_ops {
 
    void (*get_build_config)(VkDevice device, struct vk_acceleration_structure_build_state *state);
 
-   VkDeviceSize (*get_as_size)(VkDevice device, const struct vk_acceleration_structure_build_state *state);
    VkDeviceSize (*get_encode_scratch_size)(VkDevice device, const struct vk_acceleration_structure_build_state *state);
    VkDeviceSize (*get_update_scratch_size)(VkDevice device, const struct vk_acceleration_structure_build_state *state);
 

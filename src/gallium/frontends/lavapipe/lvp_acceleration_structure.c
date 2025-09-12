@@ -77,7 +77,7 @@ lvp_get_leaf_node_size(VkGeometryTypeKHR geometry_type, uint32_t *ir_leaf_node_s
 }
 
 static VkDeviceSize
-lvp_get_as_size_internal(VkGeometryTypeKHR geometry_type, uint32_t leaf_node_count)
+lvp_get_as_size(VkGeometryTypeKHR geometry_type, uint32_t leaf_node_count)
 {
    uint32_t internal_node_count = MAX2(leaf_node_count, 2) - 1;
    uint32_t nodes_size = internal_node_count * sizeof(struct lvp_bvh_box_node);
@@ -93,10 +93,12 @@ lvp_get_as_size_internal(VkGeometryTypeKHR geometry_type, uint32_t leaf_node_cou
    return sizeof(struct lvp_bvh_header) + nodes_size;
 }
 
-static VkDeviceSize
-lvp_get_as_size(VkDevice device, const struct vk_acceleration_structure_build_state *state)
+static void
+lvp_get_build_config(VkDevice device,
+                     struct vk_acceleration_structure_build_state *state)
 {
-   return lvp_get_as_size_internal(vk_get_as_geometry_type(state->build_info), state->leaf_node_count);
+   state->accel_struct_size =
+      lvp_get_as_size(vk_get_as_geometry_type(state->build_info), state->leaf_node_count);
 }
 
 static void
@@ -454,7 +456,7 @@ lvp_encode_as(struct vk_acceleration_structure *dst, VkDeviceAddress intermediat
 
    output_header->leaf_nodes_offset = sizeof(struct lvp_bvh_header) + header->ir_internal_node_count * sizeof(struct lvp_bvh_box_node);
 
-   uint32_t bvh_size = lvp_get_as_size_internal(geometry_type, leaf_count);
+   uint32_t bvh_size = lvp_get_as_size(geometry_type, leaf_count);
    output_header->compacted_size = bvh_size;
    output_header->serialization_size = sizeof(struct lvp_accel_struct_serialization_header) +
                                        sizeof(uint64_t) * output_header->instance_count + bvh_size;
@@ -662,7 +664,7 @@ lvp_encode_bind_pipeline(VkCommandBuffer cmd_buffer, const struct vk_acceleratio
 }
 
 const struct vk_acceleration_structure_build_ops accel_struct_ops = {
-   .get_as_size = lvp_get_as_size,
+   .get_build_config = lvp_get_build_config,
    .encode_bind_pipeline[0] = lvp_encode_bind_pipeline,
    .encode_as[0] = lvp_enqueue_encode_as,
 };

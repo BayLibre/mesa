@@ -1347,7 +1347,7 @@ vk_get_as_build_sizes(VkDevice _device, VkAccelerationStructureBuildTypeKHR buil
    struct vk_acceleration_structure_build_state state = { 0 };
    vk_acceleration_structure_build_state_init(&state, device, leaf_count, pBuildInfo, args);
 
-   pSizeInfo->accelerationStructureSize = device->as_build_ops->get_as_size(_device, &state);
+   pSizeInfo->accelerationStructureSize = state.accel_struct_size;
    pSizeInfo->updateScratchSize = state.scratch.update_size;
    pSizeInfo->buildScratchSize = state.scratch.size;
 }

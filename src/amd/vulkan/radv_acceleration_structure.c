@@ -221,16 +221,6 @@ radv_device_finish_accel_struct_build_state(struct radv_device *device)
 }
 
 static VkDeviceSize
-radv_get_as_size(VkDevice _device, const struct vk_acceleration_structure_build_state *state)
-{
-   VK_FROM_HANDLE(radv_device, device, _device);
-
-   struct acceleration_structure_layout accel_struct;
-   radv_get_acceleration_structure_layout(device, state, &accel_struct);
-   return accel_struct.size;
-}
-
-static VkDeviceSize
 radv_get_update_scratch_size(VkDevice _device, const struct vk_acceleration_structure_build_state *state)
 {
    VK_FROM_HANDLE(radv_device, device, _device);
@@ -284,6 +274,10 @@ radv_get_build_config(VkDevice _device, struct vk_acceleration_structure_build_s
       update_key |= RADV_BUILD_FLAG_UPDATE_SINGLE_GEOMETRY;
 
    state->config.update_key[0] = update_key;
+
+   struct acceleration_structure_layout accel_struct;
+   radv_get_acceleration_structure_layout(device, state, &accel_struct);
+   state->accel_struct_size = accel_struct.size;
 }
 
 static void
@@ -804,7 +798,6 @@ radv_device_init_accel_struct_build_state(struct radv_device *device)
       .begin_debug_marker = vk_accel_struct_cmd_begin_debug_marker,
       .end_debug_marker = vk_accel_struct_cmd_end_debug_marker,
       .get_build_config = radv_get_build_config,
-      .get_as_size = radv_get_as_size,
       .get_update_scratch_size = radv_get_update_scratch_size,
       .encode_bind_pipeline[1] = radv_init_header_bind_pipeline,
       .encode_as[1] = radv_init_header,

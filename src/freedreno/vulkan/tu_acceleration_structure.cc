@@ -144,16 +144,6 @@ get_bvh_layout(VkGeometryTypeKHR geometry_type,
    layout->size = offset;
 }
 
-VkDeviceSize
-get_bvh_size(VkDevice device,
-             const struct vk_acceleration_structure_build_state *state)
-{
-   struct bvh_layout layout;
-   get_bvh_layout(vk_get_as_geometry_type(state->build_info),
-                  state->leaf_node_count, &layout);
-   return layout.size;
-}
-
 /* Don't bother copying over the compacted size using a compute shader if
  * compaction is never going to happen.
  */
@@ -171,6 +161,11 @@ tu_get_build_config(VkDevice device,
        VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT_KHR)
          ? HEADER_USE_DISPATCH
          : HEADER_NO_DISPATCH;
+
+   struct bvh_layout layout;
+   get_bvh_layout(vk_get_as_geometry_type(state->build_info),
+                  state->leaf_node_count, &layout);
+   state->accel_struct_size = layout.size;
 }
 
 static VkResult
@@ -347,7 +342,6 @@ header(VkCommandBuffer commandBuffer,
 
 const struct vk_acceleration_structure_build_ops tu_as_build_ops = {
    .get_build_config = tu_get_build_config,
-   .get_as_size = get_bvh_size,
    .encode_bind_pipeline = { encode_bind_pipeline, header_bind_pipeline },
    .encode_as = { encode, header },
 };

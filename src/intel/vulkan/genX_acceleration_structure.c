@@ -273,18 +273,14 @@ get_bvh_layout(VkGeometryTypeKHR geometry_type, uint32_t leaf_count,
    layout->size = offset;
 }
 
-static VkDeviceSize
-anv_get_as_size(VkDevice device, const struct vk_acceleration_structure_build_state *state)
-{
-   struct bvh_layout layout;
-   get_bvh_layout(vk_get_as_geometry_type(state->build_info), state->leaf_node_count, &layout);
-   return layout.size;
-}
-
 static void
 anv_get_build_config(VkDevice device, struct vk_acceleration_structure_build_state *state)
 {
    state->config.encode_key[1] = (state->build_info->flags & VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT_KHR) ? 1 : 0;
+
+   struct bvh_layout layout;
+   get_bvh_layout(vk_get_as_geometry_type(state->build_info), state->leaf_node_count, &layout);
+   state->accel_struct_size = layout.size;
 }
 
 static void
@@ -509,7 +505,6 @@ anv_init_header(VkCommandBuffer commandBuffer, const struct vk_acceleration_stru
 static const struct vk_acceleration_structure_build_ops anv_build_ops = {
    .begin_debug_marker = begin_debug_marker,
    .end_debug_marker = end_debug_marker,
-   .get_as_size = anv_get_as_size,
    .get_build_config = anv_get_build_config,
    .encode_bind_pipeline = { anv_encode_bind_pipeline,
                              anv_init_header_bind_pipeline },
