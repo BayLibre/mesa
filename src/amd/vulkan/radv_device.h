@@ -193,6 +193,8 @@ struct radv_device {
    uint32_t image_mrt_offset_counter;
    uint32_t fmask_mrt_offset_counter;
 
+   uint32_t accel_struct_offset_counter;
+
    struct list_head shader_arenas;
    struct hash_table_u64 *capture_replay_arena_vas;
    unsigned shader_arena_shift;
