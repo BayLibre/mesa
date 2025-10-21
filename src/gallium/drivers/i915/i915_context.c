@@ -240,6 +240,10 @@ i915_create_context(struct pipe_screen *screen, void *priv, unsigned flags)
    draw_install_aaline_stage(i915->draw, &i915->base);
    draw_install_aapoint_stage(i915->draw, &i915->base, nir_type_float32);
    draw_enable_point_sprites(i915->draw, true);
+   draw_set_driver_clipping(i915->draw, false, /* bypass_clip_xy */
+                            false,             /* bypass_clip_z */
+                            true,              /* guard_band_xy */
+                            false);            /* bypass_clip_points_lines */
 
    i915->dirty = ~0;
    i915->hardware_dirty = ~0;
