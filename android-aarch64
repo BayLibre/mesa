@@ -1,0 +1,31 @@
+[constants]
+ndk = 'UPDATE-PATH_TO_NDK'
+
+# see: https://android.googlesource.com/platform/ndk/+/master/docs/BuildSystemMaintainers.md#target-selection
+triple = 'aarch64-linux-android'
+android_api_level = '35'
+target = triple + android_api_level
+
+toolchain = ndk / 'toolchains/llvm/prebuilt/linux-x86_64/bin'
+
+[properties]
+cpp_stdlib = 'vndk'
+bindgen_clang_arguments = ['-target', 'aarch64-linux-android', '--sysroot', ndk / 'toolchains/llvm/prebuilt/linux-x86_64/sysroot']
+
+
+[built-in options]
+cpp_args = ['-target', target]
+
+[binaries]
+c = toolchain / target + '-clang'
+cpp = toolchain / target + '-clang++'
+ar = toolchain / 'llvm-ar'
+strip = toolchain / 'llvm-strip'
+config = toolchain / 'llvm-config'
+llvm-config = 'llvm-config-15'
+
+[host_machine]
+system = 'android'
+cpu_family ='aarch64'
+cpu = 'cortex-a55'
+endian = 'little'
