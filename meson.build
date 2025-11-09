@@ -847,7 +847,7 @@ with_llvm = with_llvm \
 
 dep_clc = null_dep
 if with_clc
-  dep_clc = dependency('libclc')
+  dep_clc = dependency('libclc', native: true)
 endif
 
 gl_pkgconfig_c_flags = []
@@ -899,24 +899,26 @@ if with_platform_android
   dep_android_mapper4 = null_dep
   if not with_android_stub
     dep_android = [
-      dependency('cutils'),
-      dependency('hardware'),
-      dependency('log'),
-      dependency('sync'),
+      dependency('cutils', fallback: ['vndk', 'cutils_dep']),
+      dependency('hardware', fallback: ['vndk', 'libhardware_dep']),
+      dependency('log', fallback: ['vndk', 'liblog_dep']),
+      dependency('sync', fallback: ['vndk', 'libsync_dep']),
+      dependency('libvulkan', required: false),
     ]
     if with_libbacktrace and get_option('platform-sdk-version') < 34
       cpp_args += '-DWITH_LIBBACKTRACE'
       dep_android += dependency('backtrace')
     endif
     if get_option('platform-sdk-version') >= 26
-      dep_android += dependency('nativewindow')
+      dep_android += dependency('nativewindow', fallback: ['vndk', 'libnativewindow_dep'])
     endif
     if get_option('platform-sdk-version') >= 30
       dep_android_mapper4 = dependency('android.hardware.graphics.mapper', version : '>= 4.0', required : false)
     endif
-    if get_option('platform-sdk-version') >= 35
-      dep_android_ui = dependency('ui', required : false)
-    endif
+    # IMapper5 requires AIDL headers not present in VNDK v34, use IMapper4 instead
+    # if get_option('platform-sdk-version') >= 35
+    #   dep_android_ui = dependency('ui', required : false, fallback: ['vndk', 'libui_dep'])
+    # endif
   endif
   pre_args += '-DANDROID_API_LEVEL=' + get_option('platform-sdk-version').to_string()
   if get_option('android-strict')
@@ -1693,11 +1695,20 @@ allow_fallback_for_libdrm = get_option('allow-fallback-for').contains('libdrm')
 
 with_gallium_drisw_kms = false
 if system_has_kms_drm
-  dep_libdrm = dependency(
-    'libdrm', version : '>=' + _drm_ver,
-    required : with_dri2 or with_dri or with_gbm,
-    allow_fallback: allow_fallback_for_libdrm,
-  )
+  # For Android cross-compilation, force using VNDK libdrm (no version check)
+  if host_machine.system() == 'android' or (with_platform_android and not with_android_stub)
+    dep_libdrm = dependency(
+      'libdrm',
+      required : with_dri2 or with_dri or with_gbm,
+      fallback: ['vndk', 'libdrm_dep'],
+    )
+  else
+    dep_libdrm = dependency(
+      'libdrm', version : '>=' + _drm_ver,
+      required : with_dri2 or with_dri or with_gbm,
+      allow_fallback: allow_fallback_for_libdrm,
+    )
+  endif
 else
   # We should prevent libdrm from being available when the target doesn't have it to avoid transitive
   # dependencies (such as vk-runtime) linking to it
@@ -1843,7 +1854,7 @@ if with_clc
     '< @0@.@1@'.format(chosen_llvm_version_major, chosen_llvm_version_minor + 1) ]
 
   # LLVMSPIRVLib is available at https://github.com/KhronosGroup/SPIRV-LLVM-Translator
-  dep_llvmspirvlib = dependency('LLVMSPIRVLib', required : true, version : _llvmspirvlib_version)
+  dep_llvmspirvlib = dependency('LLVMSPIRVLib', required : true, version : _llvmspirvlib_version, native: true)
 else
   dep_llvmspirvlib = null_dep
 endif
@@ -1853,7 +1864,7 @@ with_spirv_tools = get_option('spirv-tools') \
 
 dep_spirv_tools = dependency(
   'SPIRV-Tools',
-  required : with_spirv_tools,
+  required : false,  # Optional for Android
   version : '>= 2024.1',
   static : host_machine.system() == 'darwin',
 )

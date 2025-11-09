@@ -28,6 +28,7 @@ include_base = cpu / 'include'
 cxx = meson.get_compiler('cpp')
 
 libdrm_dep = declare_dependency(
+    version : '2.4.120',  # Declare a version that satisfies Mesa requirements
     dependencies : cxx.find_library('drm', dirs : prebuild_libraries),
     include_directories : [
         include_directories(include_base / 'external/libdrm'),
@@ -44,6 +45,7 @@ liblog_dep = declare_dependency(
     dependencies : cxx.find_library('log', dirs : prebuild_libraries),
     include_directories : include_directories(include_base / 'system/logging/liblog/include_vndk'))
 meson.override_dependency('liblog', liblog_dep)
+meson.override_dependency('log', liblog_dep)
 
 cutils_dep = declare_dependency(
     dependencies : [
@@ -52,6 +54,7 @@ cutils_dep = declare_dependency(
     ],
     include_directories : include_directories(include_base / 'system/core/libcutils/include_outside_system'))
 meson.override_dependency('libcutils', cutils_dep)
+meson.override_dependency('cutils', cutils_dep)
 
 libutils_dep = declare_dependency(
     dependencies : cxx.find_library('utils', dirs : prebuild_libraries),
@@ -69,6 +72,7 @@ libhardware_dep = declare_dependency(
     ],
     include_directories : include_directories(include_base / 'hardware/libhardware/include'))
 meson.override_dependency('libhardware', libhardware_dep)
+meson.override_dependency('hardware', libhardware_dep)
 
 libmedia_dep = declare_dependency(
     include_directories : include_directories(include_base / 'system/media/camera/include'))
@@ -93,6 +97,7 @@ libui_dep = declare_dependency(
         include_directories(include_base / 'generated-headers/hardware/interfaces/graphics/common/1.0/android.hardware.graphics.common@1.0_genc++_headers/gen/'),
     ])
 meson.override_dependency('libui', libui_dep)
+meson.override_dependency('ui', libui_dep)
 
 vndk_libcpp_dep = declare_dependency(
     dependencies : [
@@ -109,6 +114,7 @@ libsync_dep = declare_dependency(
     dependencies : cxx.find_library('sync', dirs : prebuild_libraries),
     include_directories : include_directories(include_base / 'system/core/libsync/include'))
 meson.override_dependency('libsync', libsync_dep)
+meson.override_dependency('sync', libsync_dep)
 
 libnativewindow_dep = declare_dependency(
     dependencies : cxx.find_library('nativewindow', dirs : prebuild_libraries),
@@ -117,6 +123,7 @@ libnativewindow_dep = declare_dependency(
       include_directories(include_base / 'frameworks/native/libs/nativebase/include'),
     ])
 meson.override_dependency('libnativewindow', libnativewindow_dep)
+meson.override_dependency('nativewindow', libnativewindow_dep)
 
 graphics_mapper_dep = declare_dependency(
     version : '4.0',
@@ -144,5 +151,8 @@ graphics_mapper_dep = declare_dependency(
 meson.override_dependency('android.hardware.graphics.mapper', graphics_mapper_dep)
 
 libvulkan_dep = declare_dependency(
-    include_directories : (include_directories(include_base / 'frameworks/native/vulkan/include')))
+    include_directories : [
+        include_directories(include_base / 'frameworks/native/vulkan/include'),
+        include_directories(include_base / 'hardware/libhardware/include'),
+    ])
 meson.override_dependency('libvulkan', libvulkan_dep)
