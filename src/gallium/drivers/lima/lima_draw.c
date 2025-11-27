@@ -789,25 +789,18 @@ lima_pack_render_state(struct lima_context *ctx, const struct pipe_draw_info *in
                                  &state.varying_type_8, &state.varying_type_9};
 
          for (int i = 0, index = 0; i < ctx->vs->state.num_outputs; i++) {
-            uint32_t val;
-
             if (i == ctx->vs->state.gl_pos_idx || i == ctx->vs->state.point_size_idx)
                continue;
 
             struct lima_varying_info* v = ctx->vs->state.varying + i;
-            if (v->component_size == 4)
-               val = v->components > 2 ? LIMA_VARYING_TYPE_VEC4_FP32 : LIMA_VARYING_TYPE_VEC2_FP32;
-            else
-               val = v->components > 2 ? LIMA_VARYING_TYPE_VEC4_FP16 : LIMA_VARYING_TYPE_VEC2_FP16;
-
             if (index < 10)
-               *varyings[index] = val;
+               *varyings[index] = v->type;
             else if (index == 10) {
-               state.varying_type_10_low = val & 0x3;
-               state.varying_type_10_high = val >> 2;
+               state.varying_type_10_low = v->type & 0x3;
+               state.varying_type_10_high = v->type >> 2;
             }
             else if (index == 11)
-               state.varying_type_11 = val;
+               state.varying_type_11 = v->type;
 
             index++;
          }
@@ -942,6 +935,42 @@ lima_update_pp_uniform(struct lima_context *ctx)
       lima_ctx_buff_va(ctx, lima_ctx_buff_pp_uniform_array));
 }
 
+static unsigned int
+lima_varying_size(enum lima_varying_type type)
+{
+   switch (type) {
+   case LIMA_VARYING_TYPE_VEC4_FP32:
+      return 16;
+   case LIMA_VARYING_TYPE_VEC2_FP32:
+   case LIMA_VARYING_TYPE_VEC4_FP16:
+      return 8;
+   default:
+      return 4;
+   }
+}
+
+static unsigned int
+lima_gp_vertex_format_out(enum lima_varying_type type)
+{
+   // there are no "native" unorm/snorm outputs of the GP, but those types
+   // could be emulated when passing byte/short attributes through the VS.
+   switch (type) {
+   case LIMA_VARYING_TYPE_VEC2_FP32:
+      return 1;
+   case LIMA_VARYING_TYPE_VEC4_FP32:
+      return 3;
+   case LIMA_VARYING_TYPE_VEC2_FP16:
+      return 13;
+   case LIMA_VARYING_TYPE_VEC4_FP16:
+      return 15;
+   case LIMA_VARYING_TYPE_VEC2_SNORM16:
+   case LIMA_VARYING_TYPE_VEC2_UNORM16:
+   case LIMA_VARYING_TYPE_VEC4_UNORM8:
+   default:
+      assert(0);
+   }
+}
+
 static void
 lima_update_varying(struct lima_context *ctx, const struct pipe_draw_info *info,
                     const struct pipe_draw_start_count_bias *draw)
@@ -966,11 +995,9 @@ lima_update_varying(struct lima_context *ctx, const struct pipe_draw_info *info,
           i == vs->state.point_size_idx)
          continue;
 
-      int size = v->component_size * 4;
+      int size = lima_varying_size(v->type);
 
-      /* does component_size == 2 need to be 16 aligned? */
-      if (v->component_size == 4)
-         offset = align(offset, 16);
+      offset = align(offset, size);
 
       v->offset = offset;
       offset += size;
@@ -1016,8 +1043,7 @@ lima_update_varying(struct lima_context *ctx, const struct pipe_draw_info *info,
          /* Varying */
          varying[n++] = ctx->gp_output->va + ctx->gp_output_varyings_offt +
                         v->offset;
-         varying[n++] = (vs->state.varying_stride << 11) | (v->components - 1) |
-            (v->component_size == 2 ? 0x0C : 0);
+         varying[n++] = (vs->state.varying_stride << 11) | lima_gp_vertex_format_out(v->type);
       }
    }
 

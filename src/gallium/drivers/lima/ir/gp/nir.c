@@ -29,6 +29,7 @@
 
 #include "gpir.h"
 #include "lima_context.h"
+#include "lima_pack.h"
 
 gpir_reg *gpir_create_reg(gpir_compiler *comp)
 {
@@ -438,6 +439,26 @@ static void gpir_print_shader_db(struct nir_shader *nir, gpir_compiler *comp,
    util_debug_message(debug, SHADER_INFO, "%s", shaderdb);
    free(shaderdb);
 }
+static enum lima_varying_type gpir_varying_type(const glsl_type* type)
+{
+   enum glsl_base_type base_type = glsl_get_base_type(type);
+   unsigned int components = glsl_get_components(type);
+
+   switch (base_type) {
+   case (GLSL_TYPE_FLOAT16):
+      if (components <= 2)
+         return LIMA_VARYING_TYPE_VEC2_FP16;
+      else
+         return LIMA_VARYING_TYPE_VEC4_FP16;
+   case (GLSL_TYPE_FLOAT):
+   default:
+      if (components <= 2)
+         return LIMA_VARYING_TYPE_VEC2_FP32;
+      else
+         return LIMA_VARYING_TYPE_VEC4_FP32;
+   }
+}
+
 
 bool gpir_compile_nir(struct lima_vs_compiled_shader *prog, struct nir_shader *nir,
                       struct util_debug_callback *debug)
@@ -479,34 +500,21 @@ bool gpir_compile_nir(struct lima_vs_compiled_shader *prog, struct nir_shader *n
    if (!gpir_codegen_prog(comp))
       goto err_out0;
 
-   /* initialize to support accumulating below */
    nir_foreach_shader_out_variable(var, nir) {
-      struct lima_varying_info *v = prog->state.varying + var->data.driver_location;
-      v->components = 0;
-   }
+      prog->state.num_outputs++;
 
-   nir_foreach_shader_out_variable(var, nir) {
-      bool varying = true;
       switch (var->data.location) {
       case VARYING_SLOT_POS:
          prog->state.gl_pos_idx = var->data.driver_location;
-         varying = false;
          break;
       case VARYING_SLOT_PSIZ:
          prog->state.point_size_idx = var->data.driver_location;
-         varying = false;
          break;
+      default:
+         prog->state.num_varyings++;
+         struct lima_varying_info *v = prog->state.varying + var->data.driver_location;
+         v->type = gpir_varying_type(var->type);
       }
-
-      struct lima_varying_info *v = prog->state.varying + var->data.driver_location;
-      if (!v->components) {
-         v->component_size = gpir_glsl_type_size(glsl_get_base_type(var->type));
-         prog->state.num_outputs++;
-         if (varying)
-            prog->state.num_varyings++;
-      }
-
-      v->components += glsl_get_components(var->type);
    }
 
    gpir_print_shader_db(nir, comp, debug);
