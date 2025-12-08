@@ -33,11 +33,12 @@
  * As a result, for indirect and indexed draw we allocate a large buffer with
  * alloc on fault set.
  *
- * The size of that buffer is calculated assuming a max of 2 millions vertices
- * and 18 attributes per vertex (16 user attributes, 2 specials)
+ * The size of that buffer is calculated assuming a max of 500K vertices
+ * and 18 attributes per vertex (16 user attributes, 2 specials).
+ * Reduced from 2M to save memory on low-RAM devices (VIM3L has 2GB).
  */
 
-#define PANVK_JM_MAX_VERTICES_INDIRECT                (2000000)
+#define PANVK_JM_MAX_VERTICES_INDIRECT                (500000)
 #define PANVK_JM_MAX_PER_VTX_ATTRIBUTES_INDIRECT_SIZE (18 * 4)
 
 struct panvk_precomp_cache;

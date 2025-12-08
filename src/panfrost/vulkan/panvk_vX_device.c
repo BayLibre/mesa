@@ -463,8 +463,12 @@ panvk_per_arch(create_device)(struct panvk_physical_device *physical_device,
 #endif
 
 #if PAN_ARCH <= 9
+   /* On Valhall (arch 9), varyings are allocated from the tiler heap,
+    * requiring 128MB for large workloads. On Bifrost and earlier, 64MB
+    * suffices, saving memory on low-RAM devices (e.g. VIM3L with 2GB).
+    */
    result = panvk_priv_bo_create(
-      device, 128 * 1024 * 1024,
+      device, (PAN_ARCH >= 9) ? 128 * 1024 * 1024 : 64 * 1024 * 1024,
       PAN_KMOD_BO_FLAG_NO_MMAP | PAN_KMOD_BO_FLAG_ALLOC_ON_FAULT,
       VK_SYSTEM_ALLOCATION_SCOPE_DEVICE, &device->tiler_heap);
    if (result != VK_SUCCESS)

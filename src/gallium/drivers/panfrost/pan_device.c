@@ -114,11 +114,17 @@ panfrost_open_device(void *memctx, int fd, struct panfrost_device *dev)
     *
     * Heap management is completely different on CSF HW, don't allocate the
     * heap BO in that case.
+    *
+    * On Valhall (arch >= 9), varyings are allocated from the tiler heap,
+    * requiring 128MB for large workloads. On Bifrost and earlier, 64MB
+    * suffices, saving memory on low-RAM devices.
     */
 
    if (dev->arch < 10) {
+      size_t heap_size = (dev->arch >= 9) ? 128 * 1024 * 1024
+                                          : 64 * 1024 * 1024;
       dev->tiler_heap = panfrost_bo_create(
-         dev, 128 * 1024 * 1024, PAN_BO_INVISIBLE | PAN_BO_GROWABLE, "Tiler heap");
+         dev, heap_size, PAN_BO_INVISIBLE | PAN_BO_GROWABLE, "Tiler heap");
       if (!dev->tiler_heap)
          goto err_free_kmod_dev;
    }
