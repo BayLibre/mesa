@@ -48,6 +48,11 @@ void GENX(pan_texture_swizzle_replicate_x)(struct pan_image_view *iview);
 void GENX(pan_texture_afbc_reswizzle)(struct pan_image_view *iview);
 #endif
 
+#if PAN_ARCH >= 5 && PAN_ARCH < 9
+unsigned GENX(pan_texture_astc_compression_tag)(
+   const struct util_format_description *desc);
+#endif
+
 unsigned
 GENX(pan_texture_estimate_payload_size)(const struct pan_image_view *iview);
 

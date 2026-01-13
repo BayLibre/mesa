@@ -82,7 +82,7 @@ pan_astc_dim_3d(unsigned dim)
 }
 #endif
 
-#if PAN_ARCH >= 5 && PAN_ARCH <= 8
+#if PAN_ARCH >= 5 && PAN_ARCH < 9
 /* Texture addresses are tagged with information about compressed formats.
  * AFBC uses a bit for whether the colorspace transform is enabled (RGB and
  * RGBA only). */
@@ -121,8 +121,9 @@ afbc_compression_tag(enum mali_texture_dimension dim, uint64_t modifier)
 }
 
 /* For ASTC, this is a "stretch factor" encoding the block size. */
-static unsigned
-astc_compression_tag(const struct util_format_description *desc)
+unsigned
+GENX(pan_texture_astc_compression_tag)(
+   const struct util_format_description *desc)
 {
    if (desc->block.depth > 1) {
       return (pan_astc_dim_3d(desc->block.depth) << 4) |
@@ -191,7 +192,7 @@ pan_emit_bview_surface_with_stride(const struct pan_buffer_view *bview,
    const struct util_format_description *desc =
       util_format_description(bview->format);
    if (desc->layout == UTIL_FORMAT_LAYOUT_ASTC)
-      base |= astc_compression_tag(desc);
+      base |= GENX(pan_texture_astc_compression_tag)(desc);
 #endif
 
    pan_cast_and_pack(payload, SURFACE_WITH_STRIDE, cfg) {
@@ -794,7 +795,7 @@ get_linear_or_u_tiled_surface_props(const struct pan_image_view *iview,
 
 #if PAN_ARCH >= 5
    if (desc->layout == UTIL_FORMAT_LAYOUT_ASTC)
-      tag = astc_compression_tag(desc);
+      tag = GENX(pan_texture_astc_compression_tag)(desc);
 #endif
 
    if (pref.image->props.dim == MALI_TEXTURE_DIMENSION_3D) {
