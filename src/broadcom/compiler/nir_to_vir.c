@@ -2162,11 +2162,6 @@ v3d_optimize_nir(struct v3d_compile *c, struct nir_shader *s)
                 NIR_PASS(progress, s, nir_lower_64bit_phis);
 
                 nir_opt_peephole_select_options peephole_select_options = {
-                        .limit = 0,
-                };
-                NIR_PASS(progress, s, nir_opt_peephole_select, &peephole_select_options);
-
-                peephole_select_options = (nir_opt_peephole_select_options){
                         .limit = 24,
                         .indirect_load_ok = true,
                         .expensive_alu_ok = true,
