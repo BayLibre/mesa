@@ -3109,18 +3109,55 @@ bi_emit_alu(bi_builder *b, nir_alu_instr *instr)
       bi_v2f32_to_v2f16_to(b, dst, s0, s1);
       break;
 
-   case nir_op_ishl:
-      bi_lshift_or_to(b, sz, dst, s0, bi_zero(), bi_byte(s1, 0));
-      break;
-   case nir_op_ushr:
-      bi_rshift_or_to(b, sz, dst, s0, bi_zero(), bi_byte(s1, 0), false);
+#define LSHIFT_CASE(lop)                                                \
+   case nir_op_lshift_##lop##_pan:                                      \
+      if (sz == 32)                                                     \
+         bi_lshift_##lop##_i32_to(b, dst, s0, s2, s1);                  \
+      else if (sz == 16)                                                \
+         bi_lshift_##lop##_v2i16_to(b, dst, s0, s2, bi_swiz_b01(s1));   \
+      else if (sz == 8)                                                 \
+         bi_lshift_##lop##_v4i8_to(b, dst, s0, s2, s1);                 \
+      else                                                              \
+         UNREACHABLE("Unsupported bit size");                           \
       break;
 
-   case nir_op_ishr:
-      if (b->shader->arch >= 9)
-         bi_rshift_or_to(b, sz, dst, s0, bi_zero(), bi_byte(s1, 0), true);
+   LSHIFT_CASE(and)
+   LSHIFT_CASE(or)
+   LSHIFT_CASE(xor)
+
+#undef LSHIFT_CASE
+
+#define RSHIFT_CASE(sop, lop, a)                                           \
+   case nir_op_##sop##_##lop##_pan:                                        \
+      assert(!(a) || b->shader->arch >= 9);                                \
+      if (sz == 32)                                                        \
+         bi_rshift_##lop##_i32_to(b, dst, s0, s2, s1, a);                  \
+      else if (sz == 16)                                                   \
+         bi_rshift_##lop##_v2i16_to(b, dst, s0, s2, bi_swiz_b01(s1), a);   \
+      else if (sz == 8)                                                    \
+         bi_rshift_##lop##_v4i8_to(b, dst, s0, s2, s1, a);                 \
+      else                                                                 \
+         UNREACHABLE("Unsupported bit size");                              \
+      break;
+
+   RSHIFT_CASE(rshift, and, false)
+   RSHIFT_CASE(rshift, or,  false)
+   RSHIFT_CASE(rshift, xor, false)
+   RSHIFT_CASE(arshift, and, true)
+   RSHIFT_CASE(arshift, or,  true)
+   RSHIFT_CASE(arshift, xor, true)
+
+#undef RSHIFT_CASE
+
+   case nir_op_arshift_pan:
+      if (sz == 32)
+         bi_arshift_i32_to(b, dst, s0, bi_null(), s1);
+      else if (sz == 16)
+         bi_arshift_v2i16_to(b, dst, s0, bi_null(), bi_swiz_b01(s1));
+      else if (sz == 8)
+         bi_arshift_v4i8_to(b, dst, s0, bi_null(), s1);
       else
-         bi_arshift_to(b, sz, dst, s0, bi_null(), bi_byte(s1, 0));
+         UNREACHABLE("Unsupported bit size");
       break;
 
    case nir_op_imin:
@@ -3430,22 +3467,6 @@ bi_emit_alu(bi_builder *b, nir_alu_instr *instr)
 
    case nir_op_iabs:
       bi_iabs_to(b, sz, dst, s0);
-      break;
-
-   case nir_op_iand:
-      bi_lshift_and_to(b, sz, dst, s0, s1, bi_imm_u8(0));
-      break;
-
-   case nir_op_ior:
-      bi_lshift_or_to(b, sz, dst, s0, s1, bi_imm_u8(0));
-      break;
-
-   case nir_op_ixor:
-      bi_lshift_xor_to(b, sz, dst, s0, s1, bi_imm_u8(0));
-      break;
-
-   case nir_op_inot:
-      bi_lshift_or_to(b, sz, dst, bi_zero(), bi_not(s0), bi_imm_u8(0));
       break;
 
    case nir_op_frsq:

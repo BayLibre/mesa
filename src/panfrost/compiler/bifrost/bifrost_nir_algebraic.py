@@ -122,6 +122,18 @@ for bsz in [8, 16, 32]:
             ((f'b2f{fsz}', f'a@{bsz}'), (f'b{fsz}csel', a_fsz, 1.0, 0.0)),
         ]
 
+# Convert shifts and logic ops to fused shift+logic ops
+algebraic_late += [
+    (('iand', a, b), ('lshift_and_pan', a, 0, b)),
+    (('ior', a, b), ('lshift_or_pan', a, 0, b)),
+    (('ixor', a, b), ('lshift_xor_pan', a, 0, b)),
+    (('inot', a), ('lshift_xor_pan', a, 0, -1)),
+    (('ishl', a, b), ('lshift_or_pan', a, ('u2u8', b), 0)),
+    (('ushr', a, b), ('rshift_or_pan', a, ('u2u8', b), 0)),
+    (('ishr', a, b), ('arshift_or_pan', a, ('u2u8', b), 0), 'gpu_arch >= 9'),
+    (('ishr', a, b), ('arshift_pan', a, ('u2u8', b)), 'gpu_arch < 9'),
+]
+
 # Bifrost LDEXP.v2f16 takes i16 exponent, while nir_op_ldexp takes i32. Lower
 # to nir_op_ldexp16_pan.
 #
