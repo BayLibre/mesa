@@ -130,9 +130,6 @@ bi_vectorize_filter(const nir_instr *instr, const void *data)
       return 0;
    case nir_op_frcp:
    case nir_op_frsq:
-   case nir_op_ishl:
-   case nir_op_ishr:
-   case nir_op_ushr:
    case nir_op_extract_u16:
    case nir_op_extract_i16:
    case nir_op_insert_u16:
