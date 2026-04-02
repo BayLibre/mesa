@@ -1407,6 +1407,21 @@ triop_shift_ir3("shrg_ir3", ">>", "|")
 triop_shift_ir3("shlg_ir3", "<<", "|")
 triop("andg_ir3", tuint, _2src_commutative, "(src0 & src1) | src2")
 
+def triop_shift_pan(name, type0, shift_expr):
+    shift_decl = "uint8_t shift = src1 & (bit_size - 1);"
+    opcode(name + '_and_pan', 0, type0, [0, 0, 0], [type0, tuint8, tuint],
+           False, "", f"{shift_decl}; dst = ({shift_expr}) & src2;")
+    opcode(name + '_or_pan', 0, type0, [0, 0, 0], [type0, tuint8, tuint],
+           False, "", f"{shift_decl}; dst = ({shift_expr}) | src2;")
+    opcode(name + '_xor_pan', 0, type0, [0, 0, 0], [type0, tuint8, tuint],
+           False, "", f"{shift_decl}; dst = ({shift_expr}) ^ src2;")
+
+opcode("arshift_pan", 0, tint, [0, 0], [tint, tuint8],
+       False, "", "src0 >> (src1 & (bit_size - 1))")
+triop_shift_pan("arshift", tint, "src0 >> shift")
+triop_shift_pan("lshift", tuint, "src0 << shift")
+triop_shift_pan("rshift", tuint, "src0 >> shift")
+
 # r600/gcn specific instruction that evaluates unnormalized cube texture coordinates
 # and face index
 # The actual texture coordinates are evaluated from this according to
