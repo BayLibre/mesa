@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: MIT
 
 import argparse
+import itertools
 import sys
 import math
 
@@ -122,7 +123,26 @@ for bsz in [8, 16, 32]:
             ((f'b2f{fsz}', f'a@{bsz}'), (f'b{fsz}csel', a_fsz, 1.0, 0.0)),
         ]
 
-# Convert shifts and logic ops to fused shift+logic ops
+LOPS = ['and', 'or', 'xor']
+SHIFTS = [
+    ('ishl', 'lshift'),
+    ('ushr', 'rshift'),
+    ('ishr', 'arshift'),
+]
+
+for (ns, ps), lop in itertools.product(SHIFTS, LOPS):
+    cond = 'true' if ps in ['lshift', 'rshift'] else 'gpu_arch >= 9'
+    nl = f'i{lop}'
+    psl = f'{ps}_{lop}_pan'
+    algebraic_late += [
+        ((nl, (f'{ns}(is_used_once)', (nl, a, '#b'), '#c'), '#d'),
+         (psl, a, ('u2u8', c), (nl, (ns, b, c), d)), cond),
+        ((nl, (f'{ns}(is_used_once)', a, b), c),
+         (psl, a, ('u2u8', b), c), cond),
+        ((ns, (nl, a, '#b'), '#c'), (psl, a, ('u2u8', c), (ns, b, c)), cond),
+    ]
+
+# If we have any regular shifts or logic ops left, lower them
 algebraic_late += [
     (('iand', a, b), ('lshift_and_pan', a, 0, b)),
     (('ior', a, b), ('lshift_or_pan', a, 0, b)),
