@@ -184,7 +184,27 @@
 
   <enum name="Lanes (8-bit)">
     <desc>Used to select the 2 bytes for shifts of 16-bit vectors</desc>
+    <value>b0123</value>
+    <value>b3210</value>
+    <value>b0101</value>
+    <value>b2323</value>
+    <value>b0000</value>
+    <value>b1111</value>
+    <value>b2222</value>
+    <value>b3333</value>
+    <value>b2301</value>
+    <value>b1032</value>
+    <value>b0011</value>
+    <value>b2233</value>
     <reserved/>
+    <reserved/>
+    <reserved/>
+    <reserved/>
+  </enum>
+
+  <enum name="Lanes (16-bit)">
+    <desc>Used to select the 2 bytes for shifts of 16-bit vectors</desc>
+    <value>b02</value>
     <reserved/>
     <reserved/>
     <reserved/>
@@ -192,6 +212,26 @@
     <value>b11</value>
     <value>b22</value>
     <value>b33</value>
+    <reserved/>
+    <reserved/>
+    <value>b01</value>
+    <value>b23</value>
+    <reserved/>
+    <reserved/>
+    <reserved/>
+    <reserved/>
+  </enum>
+
+  <enum name="Lanes (32-bit)">
+    <desc>Used to select the byte for shifts of 32-bit vectors</desc>
+    <reserved/>
+    <reserved/>
+    <reserved/>
+    <reserved/>
+    <value>b0</value>
+    <value>b1</value>
+    <value>b2</value>
+    <value>b3</value>
     <reserved/>
     <reserved/>
     <reserved/>

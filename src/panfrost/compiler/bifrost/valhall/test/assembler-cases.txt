@@ -32,7 +32,7 @@ e6 00 00 00 00 c1 91 06    MOV.i32 r1, core_id.w0
 00 00 00 00 00 c0 00 78    NOP.end 
 40 c4 c0 9c 01 c1 f0 00    ICMP_OR.u32.gt.m1 r1, r0^, 0x1000000.b3, 0x0
 42 00 00 18 02 40 61 50    STORE.i32.slot0.reconverge @r0, r2^, offset:0
-00 c9 8f 12 30 c0 a0 00    CLPER.i32.f1 r0, r0, 0x7060504.b00
+00 c9 8f 12 30 c0 a0 00    CLPER.i32.f1 r0, r0, 0x7060504.b0
 00 00 00 30 00 c7 90 00    S8_TO_S32 r7, r0.b3
 00 00 00 20 00 c6 90 00    S8_TO_S32 r6, r0.b2
 00 00 00 00 00 c4 90 00    S8_TO_S32 r4, r0.b0
@@ -190,8 +190,8 @@ c0 00 00 00 00 c9 10 01    IADD_IMM.i32 r9, 0x0, #0x0
 00 00 00 00 00 c0 00 48    NOP.wait 
 81 0b 80 33 04 8e 78 00    LD_TILE.v4.f16.slot0 @r14:r15, u1, r11, u0
 0b 00 04 00 00 cc 91 00    CLZ.u32 r12, r11
-82 4c c0 52 00 cc b4 00    RSHIFT_XOR.i32.not_result r12, u2, r12^.b00, 0x0
-4b c0 4c 10 01 cb b4 08    LSHIFT_AND.i32.wait0 r11, r11^, 0x0.b00, r12^
+82 4c c0 52 00 cc b4 00    RSHIFT_XOR.i32.not_result r12, u2, r12^.b0, 0x0
+4b c0 4c 10 01 cb b4 08    LSHIFT_AND.i32.wait0 r11, r11^, 0x0.b0, r12^
 4f 49 00 28 00 c9 a5 00    FADD.v2f16 r9, r15^, r9^
 4e 48 00 28 00 c8 a5 00    FADD.v2f16 r8, r14^, r8^
 0b f8 ff ff 07 c0 1f 50    BRANCHZ.reconverge r11, offset:-8
@@ -235,7 +235,7 @@ c0 f1 00 00 10 c1 2f 08    BRANCHZI.eq.absolute.wait0 0x0, blend_descriptor_0.w1
 41 41 40 ad 01 c0 f5 00    FCMP_AND.v2f16.gt.m1 r0, r1^, r1^.h11, r0^
 40 c0 c0 a8 03 c0 f5 10    FCMP_OR.v2f16.ne.m1.wait1 r0, r0^, 0x0, 0x0
 41 41 40 ad 01 c0 f5 00    FCMP_AND.v2f16.gt.m1 r0, r1^, r1^.h11, r0^
-c4 c0 40 10 71 c0 b6 00    LSHIFT_AND.v4i8 r0, 0x1000000.b3333, 0x0.b00, r0^
+c4 c0 40 10 71 c0 b6 00    LSHIFT_AND.v4i8 r0, 0x1000000.b3333, 0x0.b0000, r0^
 40 00 13 00 80 c0 90 00    V2U8_TO_V2F16 r0, r0^.b02
 41 40 00 40 00 c0 aa 00    IADD.v4s8.saturate r0, r1^, r0^
 41 40 01 40 00 c0 aa 00    ISUB.v4s8.saturate r0, r1^, r0^

@@ -371,19 +371,46 @@ va_pack_halfswizzle(const bi_instr *I, enum bi_swizzle swz)
    }
 }
 
-static enum va_lanes_8_bit
-va_pack_shift_lanes(const bi_instr *I, enum bi_swizzle swz)
+static unsigned
+va_pack_shift_lanes(const bi_instr *I, enum bi_swizzle swz,
+                    unsigned type_size)
 {
-   switch (swz) {
-   case BI_SWIZZLE_B00:
-      return VA_LANES_8_BIT_B00;
-   case BI_SWIZZLE_B11:
-      return VA_LANES_8_BIT_B11;
-   case BI_SWIZZLE_B22:
-      return VA_LANES_8_BIT_B22;
-   case BI_SWIZZLE_B33:
-      return VA_LANES_8_BIT_B33;
-   default:
+   if (type_size == 8) {
+      switch (swz) {
+      case BI_SWIZZLE_B0123: return VA_LANES_8_BIT_B0123;
+      case BI_SWIZZLE_B3210: return VA_LANES_8_BIT_B3210;
+      case BI_SWIZZLE_B0101: return VA_LANES_8_BIT_B0101;
+      case BI_SWIZZLE_B2323: return VA_LANES_8_BIT_B2323;
+      case BI_SWIZZLE_B0000: return VA_LANES_8_BIT_B0000;
+      case BI_SWIZZLE_B1111: return VA_LANES_8_BIT_B1111;
+      case BI_SWIZZLE_B2222: return VA_LANES_8_BIT_B2222;
+      case BI_SWIZZLE_B3333: return VA_LANES_8_BIT_B3333;
+      case BI_SWIZZLE_B2301: return VA_LANES_8_BIT_B2301;
+      case BI_SWIZZLE_B1032: return VA_LANES_8_BIT_B1032;
+      case BI_SWIZZLE_B0011: return VA_LANES_8_BIT_B0011;
+      case BI_SWIZZLE_B2233: return VA_LANES_8_BIT_B2233;
+      default: invalid_instruction(I, "lane shift");
+      }
+   } else if (type_size == 16) {
+      switch (swz) {
+      case BI_SWIZZLE_B02: return VA_LANES_16_BIT_B02;
+      case BI_SWIZZLE_B00: return VA_LANES_16_BIT_B00;
+      case BI_SWIZZLE_B11: return VA_LANES_16_BIT_B11;
+      case BI_SWIZZLE_B22: return VA_LANES_16_BIT_B22;
+      case BI_SWIZZLE_B33: return VA_LANES_16_BIT_B33;
+      case BI_SWIZZLE_B01: return VA_LANES_16_BIT_B01;
+      case BI_SWIZZLE_B23: return VA_LANES_16_BIT_B23;
+      default: invalid_instruction(I, "lane shift");
+      }
+   } else if (type_size == 32) {
+      switch (swz) {
+      case BI_SWIZZLE_B0: return VA_LANES_32_BIT_B0;
+      case BI_SWIZZLE_B1: return VA_LANES_32_BIT_B1;
+      case BI_SWIZZLE_B2: return VA_LANES_32_BIT_B2;
+      case BI_SWIZZLE_B3: return VA_LANES_32_BIT_B3;
+      default: invalid_instruction(I, "lane shift");
+      }
+   } else {
       invalid_instruction(I, "lane shift");
    }
 }
@@ -652,7 +679,8 @@ va_pack_alu(const bi_instr *I, unsigned arch)
       } else if (src_info.lanes) {
          pack_assert(I, src_info.size == VA_SIZE_8);
          pack_assert(I, i == 1);
-         hex |= (uint64_t)va_pack_shift_lanes(I, src.swizzle) << 26;
+         unsigned sz = info.type_size;
+         hex |= (uint64_t)va_pack_shift_lanes(I, src.swizzle, sz) << 26;
       } else if (src_info.combine) {
          /* Treat as swizzle, subgroup ops not yet supported */
          pack_assert(I, src_info.size == VA_SIZE_32);

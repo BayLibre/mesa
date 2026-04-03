@@ -163,7 +163,13 @@ va_print_dest(FILE *fp, unsigned mask, unsigned value, bool can_mask)
 % endif
 % endif
 % if src.lanes:
+% if typesize(op.name) == 32:
+            fputs(valhall_lanes_32_bit[(instr >> ${src.offset['widen']}) & ${hex(src.mask['widen'])}], fp);
+% elif typesize(op.name) == 16:
+            fputs(valhall_lanes_16_bit[(instr >> ${src.offset['widen']}) & ${hex(src.mask['widen'])}], fp);
+% elif typesize(op.name) == 8:
             fputs(valhall_lanes_8_bit[(instr >> ${src.offset['widen']}) & ${hex(src.mask['widen'])}], fp);
+% endif
 % elif src.halfswizzle:
             fputs(valhall_half_swizzles_8_bit[(instr >> ${src.offset['widen']}) & ${hex(src.mask['widen'])}], fp);
 % elif src.widen:

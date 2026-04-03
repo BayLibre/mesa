@@ -208,6 +208,7 @@ def parse_asm(line):
 
         # Require a word selection for special FAU values
         needs_word_select = ((encoded_src >> 5) == 0b111)
+        dest_size = typesize(op)
 
         # Has a swizzle been applied yet?
         swizzled = False
@@ -248,18 +249,30 @@ def parse_asm(line):
                 swizzled = True
                 val = enums['swizzles_16_bit'].bare_values.index(mod)
                 encoded |= (val << src.offset['swizzle'])
+            elif dest_size == 32 and mod in enums['lanes_32_bit'].bare_values:
+                die_if(not src.lanes, "Instruction doesn't take a lane")
+                die_if(swizzled, "Multiple swizzles specified")
+                swizzled = True
+                val = enums['lanes_32_bit'].bare_values.index(mod)
+                encoded |= (val << src.offset['widen'])
+            elif dest_size == 16 and mod in enums['lanes_16_bit'].bare_values:
+                die_if(not src.lanes, "Instruction doesn't take a lane")
+                die_if(swizzled, "Multiple swizzles specified")
+                swizzled = True
+                val = enums['lanes_32_bit'].bare_values.index(mod)
+                encoded |= (val << src.offset['widen'])
+            elif dest_size == 8 and mod in enums['lanes_8_bit'].bare_values:
+                die_if(not src.lanes, "Instruction doesn't take a lane")
+                die_if(swizzled, "Multiple swizzles specified")
+                swizzled = True
+                val = enums['lanes_8_bit'].bare_values.index(mod)
+                encoded |= (val << src.offset['widen'])
             elif mod in enums['lane_8_bit'].bare_values:
                 die_if(not src.lane, "Instruction doesn't take a lane")
                 die_if(swizzled, "Multiple swizzles specified")
                 swizzled = True
                 val = enums['lane_8_bit'].bare_values.index(mod)
                 encoded |= (val << src.lane)
-            elif mod in enums['lanes_8_bit'].bare_values:
-                die_if(not src.lanes, "Instruction doesn't take a lane")
-                die_if(swizzled, "Multiple swizzles specified")
-                swizzled = True
-                val = enums['lanes_8_bit'].bare_values.index(mod)
-                encoded |= (val << src.offset['widen'])
             elif mod in ['w0', 'w1']:
                 # Chck for special
                 die_if(not needs_word_select, 'Unexpected word select')

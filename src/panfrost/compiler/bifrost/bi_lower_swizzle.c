@@ -45,8 +45,21 @@ va_op_swizzles(enum bi_opcode op, unsigned src)
 
    if (info.lanes) {
       assert(info.size == VA_SIZE_8);
-      swizzles |= (1 << BI_SWIZZLE_B00) | (1 << BI_SWIZZLE_B11) |
-                  (1 << BI_SWIZZLE_B22) | (1 << BI_SWIZZLE_B33);
+      if (valhall_opcodes[op].type_size == 8)
+         swizzles |= (1 << BI_SWIZZLE_B0123) | (1 << BI_SWIZZLE_B3210) |
+                     (1 << BI_SWIZZLE_B0101) | (1 << BI_SWIZZLE_B2323) |
+                     (1 << BI_SWIZZLE_B0000) | (1 << BI_SWIZZLE_B1111) |
+                     (1 << BI_SWIZZLE_B2222) | (1 << BI_SWIZZLE_B3333) |
+                     (1 << BI_SWIZZLE_B2301) | (1 << BI_SWIZZLE_B1032) |
+                     (1 << BI_SWIZZLE_B0011) | (1 << BI_SWIZZLE_B2233);
+      else if (valhall_opcodes[op].type_size == 16)
+         swizzles |= (1 << BI_SWIZZLE_B02) | (1 << BI_SWIZZLE_B00) |
+                     (1 << BI_SWIZZLE_B11) | (1 << BI_SWIZZLE_B22) |
+                     (1 << BI_SWIZZLE_B33) | (1 << BI_SWIZZLE_B01) |
+                     (1 << BI_SWIZZLE_B23);
+      else if (valhall_opcodes[op].type_size == 32)
+         swizzles |= (1 << BI_SWIZZLE_B0) | (1 << BI_SWIZZLE_B1) |
+                     (1 << BI_SWIZZLE_B2) | (1 << BI_SWIZZLE_B3);
    }
 
    if (info.halfswizzle) {
