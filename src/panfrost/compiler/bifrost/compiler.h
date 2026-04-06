@@ -547,7 +547,8 @@ bi_is_zero(const bi_index idx)
 static inline bool
 bi_is_equiv(bi_index left, bi_index right)
 {
-   return (left.type == right.type) && (left.value == right.value);
+   return (left.type == right.type) && (left.memory == right.memory) &&
+          (left.value == right.value);
 }
 
 /* A stronger equivalence relation that requires the indices access the
@@ -573,7 +574,8 @@ bi_is_value_equiv(bi_index left, bi_index right)
    } else {
       return (left.value == right.value) && (left.abs == right.abs) &&
              (left.neg == right.neg) && (left.swizzle == right.swizzle) &&
-             (left.offset == right.offset) && (left.type == right.type);
+             (left.offset == right.offset) && (left.type == right.type) &&
+             (left.memory == right.memory);
    }
 }
 
