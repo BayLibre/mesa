@@ -290,6 +290,8 @@ enum bi_index_type {
    BI_INDEX_FAU = 5
 };
 
+PRAGMA_DIAGNOSTIC_PUSH
+PRAGMA_DIAGNOSTIC_ERROR(-Wpadded)
 typedef struct {
    uint32_t value;
 
@@ -321,6 +323,8 @@ typedef struct {
    /* Must be zeroed so we can hash the whole 64-bits at a time */
    unsigned padding : (32 - 16);
 } bi_index;
+PRAGMA_DIAGNOSTIC_POP
+static_assert(sizeof(bi_index) == 8, "bi_index has no holes");
 
 static inline bi_index
 bi_get_index(unsigned value)
