@@ -1,0 +1,80 @@
+#!amber
+DEVICE_EXTENSION VK_KHR_8bit_storage
+DEVICE_EXTENSION VK_KHR_shader_float16_int8
+DEVICE_EXTENSION VK_KHR_storage_buffer_storage_class
+DEVICE_FEATURE Storage8BitFeatures.storageBuffer8BitAccess
+DEVICE_FEATURE Float16Int8Features.shaderInt8
+
+SHADER compute compute_shader SPIRV-ASM
+                    OpCapability Shader
+                    OpCapability Int8
+                    OpMemoryModel Logical GLSL450
+                    OpEntryPoint GLCompute %main "main" %local_idx_var
+                    OpExecutionMode %main LocalSize 1 1 1
+                    OpName %main "main"
+                    OpMemberDecorate %u8v4_pair_t 0 Offset 0
+                    OpMemberDecorate %u8v4_pair_t 1 Offset 4
+                    OpDecorate %u8v4_pair_rtarray_t ArrayStride 8
+                    OpDecorate %block_t Block
+                    OpMemberDecorate %block_t 0 Offset 0
+                    OpDecorate %local_idx_var BuiltIn LocalInvocationIndex
+                    OpDecorate %block_var DescriptorSet 0
+                    OpDecorate %block_var Binding 0
+
+         %void_t = OpTypeVoid
+    %void_func_t = OpTypeFunction %void_t
+            %b_t = OpTypeBool
+           %u8_t = OpTypeInt 8 0
+          %u32_t = OpTypeInt 32 0
+         %u8v4_t = OpTypeVector %u8_t 4
+          %u32_0 = OpConstant %u32_t 0
+          %u32_1 = OpConstant %u32_t 1
+          %u8_13 = OpConstant %u8_t 13
+          %u8_17 = OpConstant %u8_t 17
+    %u8v4_pair_t = OpTypeStruct %u8v4_t %u8v4_t
+  %u8v4_pair_rtarray_t = OpTypeRuntimeArray %u8v4_pair_t
+        %block_t = OpTypeStruct %u8v4_pair_rtarray_t
+     %u32_iptr_t = OpTypePointer Input %u32_t
+   %u8v4_sbptr_t = OpTypePointer StorageBuffer %u8v4_t
+  %block_sbptr_t = OpTypePointer StorageBuffer %block_t
+
+  %local_idx_var = OpVariable %u32_iptr_t Input
+      %block_var = OpVariable %block_sbptr_t StorageBuffer
+
+           %main = OpFunction %void_t None %void_func_t
+              %1 = OpLabel
+      %local_idx = OpLoad %u32_t %local_idx_var
+   %local_idx_u8 = OpUConvert %u8_t %local_idx
+       %in_a_ptr = OpAccessChain %u8v4_sbptr_t %block_var %u32_0 %local_idx %u32_0
+       %in_b_ptr = OpAccessChain %u8v4_sbptr_t %block_var %u32_0 %local_idx %u32_1
+              %a = OpLoad %u8v4_t %in_a_ptr
+              %b = OpLoad %u8v4_t %in_b_ptr
+          %swz_b = OpVectorShuffle %u8v4_t %b %b 2 3 2 3
+              %c = OpShiftLeftLogical %u8v4_t %a %swz_b
+        %out_ptr = OpAccessChain %u8v4_sbptr_t %block_var %u32_0 %local_idx %u32_0
+                    OpStore %out_ptr %c
+                    OpReturn
+                    OpFunctionEnd
+END
+
+# Set the buffer at binding 0 to be large enough to hold 32 uints
+BUFFER buf0 DATA_TYPE uint8[] DATA
+5 6 7 8
+1 2 3 4
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 0
+END
+
+PIPELINE compute pipeline
+  ATTACH compute_shader
+
+  BIND BUFFER buf0 AS storage DESCRIPTOR_SET 0 BINDING 0
+END
+
+RUN pipeline 1 1 1
+
+EXPECT buf0 IDX 0   EQ 40
+EXPECT buf0 IDX 1   EQ 96
+EXPECT buf0 IDX 2   EQ 56
+EXPECT buf0 IDX 3   EQ 128
