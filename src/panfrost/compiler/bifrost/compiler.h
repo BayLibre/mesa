@@ -300,6 +300,7 @@ typedef struct {
     * applicable, neg plays the role of not */
    bool abs : 1;
    bool neg : 1;
+   bool bnot : 1;
 
    /* The last use of a value, should be purged from the register cache.
     * Set by liveness analysis. */
@@ -321,7 +322,7 @@ typedef struct {
    bool memory : 1;
 
    /* Must be zeroed so we can hash the whole 64-bits at a time */
-   unsigned padding : (32 - 16);
+   unsigned padding : (32 - 17);
 } bi_index;
 PRAGMA_DIAGNOSTIC_POP
 static_assert(sizeof(bi_index) == 8, "bi_index has no holes");
@@ -473,6 +474,7 @@ bi_replace_index(bi_index old, bi_index replacement)
 {
    replacement.abs = old.abs;
    replacement.neg = old.neg;
+   replacement.bnot = old.bnot;
    replacement.swizzle = old.swizzle;
    replacement.discard = false; /* needs liveness analysis to set */
    return replacement;
@@ -487,13 +489,17 @@ bi_replace_index(bi_index old, bi_index replacement)
 static inline bi_index
 bi_strip_index(bi_index index)
 {
-   index.abs = index.neg = false;
+   index.abs = index.neg = index.bnot = false;
    index.swizzle = BI_SWIZZLE_H01;
    return index;
 }
 
-/* For bitwise instructions */
-#define bi_not(x) bi_neg(x)
+static inline bi_index
+bi_not(bi_index idx)
+{
+   idx.bnot = !idx.bnot;
+   return idx;
+}
 
 static inline bi_index
 bi_imm_u8(uint8_t imm)
@@ -537,7 +543,8 @@ bi_is_ssa(bi_index idx)
 static inline bool
 bi_is_zero(const bi_index idx)
 {
-   return idx.type == BI_INDEX_CONSTANT && idx.value == 0 && !idx.neg;
+   return idx.type == BI_INDEX_CONSTANT && idx.value == 0 &&
+          !idx.neg && !idx.bnot;
 }
 
 /* Compares equivalence as references. Does not compare offsets, swizzles, or
@@ -579,7 +586,8 @@ bi_is_value_equiv(bi_index left, bi_index right)
          return false;
    }
 
-   return (left.abs == right.abs) && (left.neg == right.neg);
+   return (left.abs == right.abs) && (left.neg == right.neg) &&
+          (left.bnot == right.bnot);
 }
 
 #define BI_MAX_VEC   16
@@ -1421,6 +1429,7 @@ bi_temp_like(bi_context *ctx, bi_index idx)
     */
    idx.abs = false;
    idx.neg = false;
+   idx.bnot = false;
    idx.swizzle = BI_SWIZZLE_H01;
    idx.discard = false;
    return idx;

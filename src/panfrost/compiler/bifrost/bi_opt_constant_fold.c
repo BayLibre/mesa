@@ -51,7 +51,7 @@ bi_fold_constant(bi_instr *I, bool *unsupported)
       return (c << 16) | ((b & 0xFF) << 8) | (a & 0xFF);
 
    case BI_OPCODE_LSHIFT_OR_I32:
-      if (I->not_result || I->src[0].neg || I->src[1].neg)
+      if (I->not_result || I->src[0].bnot || I->src[1].bnot)
          break;
 
       return (a << (c & 0x1F)) | b;

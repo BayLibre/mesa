@@ -27,6 +27,7 @@ hash_index(uint32_t hash, bi_index index)
    hash = HASH(hash, index.value);
    hash = HASH(hash, index.abs);
    hash = HASH(hash, index.neg);
+   hash = HASH(hash, index.bnot);
    hash = HASH(hash, index.swizzle);
    hash = HASH(hash, index.offset);
    hash = HASH(hash, index.type);

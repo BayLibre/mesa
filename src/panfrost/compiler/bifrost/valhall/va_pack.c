@@ -636,7 +636,7 @@ va_pack_alu(const bi_instr *I, unsigned arch)
       hex |= (uint64_t)va_pack_src(I, logical_i + src_offset) << (8 * i);
 
       if (src_info.notted) {
-         if (src.neg)
+         if (src.bnot)
             hex |= (1ull << 35);
       } else if (src_info.absneg) {
          unsigned neg_offs = 32 + 2 + ((2 - i) * 2);

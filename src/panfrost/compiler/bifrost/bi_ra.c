@@ -548,6 +548,7 @@ bi_reg_from_index(bi_context *ctx, struct lcra_state *l, bi_index index)
    new_index.swizzle = index.swizzle;
    new_index.abs = index.abs;
    new_index.neg = index.neg;
+   new_index.bnot = index.bnot;
    return new_index;
 }
 
@@ -1008,6 +1009,7 @@ bi_out_of_ssa(bi_context *ctx)
 
             assert(!I->src[i].abs);
             assert(!I->src[i].neg);
+            assert(!I->src[i].bnot);
             assert(I->src[i].swizzle == BI_SWIZZLE_H01);
 
             if (I->src[i].memory)

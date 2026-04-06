@@ -101,6 +101,9 @@ bi_print_index(FILE *fp, bi_index index, unsigned nr_regs)
     if (index.neg)
         fputs(".neg", fp);
 
+    if (index.bnot)
+        fputs(".not", fp);
+
     fputs(bi_swizzle_as_str(index.swizzle), fp);
 }
 

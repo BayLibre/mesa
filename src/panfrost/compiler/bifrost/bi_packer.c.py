@@ -136,8 +136,10 @@ def pack_modifier(mod, width, default, opts, body, pack_exprs):
         ir_value = "dest->swizzle"
     elif raw in ["abs", "sign"]:
         ir_value = "src[{}].abs".format(arg)
-    elif raw in ["neg", "not"]:
+    elif raw == "neg":
         ir_value = "src[{}].neg".format(arg)
+    elif raw == "not":
+        ir_value = "src[{}].bnot".format(arg)
 
     ir_value = "I->{}".format(ir_value)
 
