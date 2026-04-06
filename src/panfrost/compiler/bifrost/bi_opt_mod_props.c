@@ -105,6 +105,118 @@ bi_compose_float_index(bi_index old, bi_index repl)
    return repl;
 }
 
+static void
+bi_try_prop_fabsneg(unsigned arch, bi_instr *I, unsigned s,
+                    const bi_instr *mod)
+{
+   unsigned size = bi_get_opcode_props(I)->size;
+
+   if (!bi_is_fabsneg(mod->op, size))
+      return;
+
+   if (mod->src[0].abs && !bi_takes_fabs(arch, I, mod->src[0], s))
+      return;
+
+   if (mod->src[0].neg && !bi_takes_fneg(arch, I, s))
+      return;
+
+   I->src[s] = bi_compose_float_index(I->src[s], mod->src[0]);
+}
+
+static bool
+bi_takes_bnot(unsigned arch, bi_instr *I, unsigned s)
+{
+   return s == 1 && bi_get_opcode_props(I)->not_mod;
+}
+
+static bool
+bi_is_not_zero(bi_index idx)
+{
+   if (idx.type != BI_INDEX_CONSTANT)
+      return false;
+
+   uint32_t val = bi_apply_swizzle(idx.value, idx.swizzle);
+   return idx.bnot ? val == 0 : val == UINT32_MAX;
+}
+
+static bi_index
+bi_as_bnot(const bi_instr *I)
+{
+   switch (I->op) {
+   case BI_OPCODE_LSHIFT_XOR_I32:
+   case BI_OPCODE_LSHIFT_XOR_V2I16:
+   case BI_OPCODE_LSHIFT_XOR_V4I8:
+   case BI_OPCODE_RSHIFT_XOR_I32:
+   case BI_OPCODE_RSHIFT_XOR_V2I16:
+   case BI_OPCODE_RSHIFT_XOR_V4I8:
+      /* We assume we've already called fold_not_zero() */
+      if (bi_is_not_zero(I->src[1]) && bi_is_zero(I->src[2]))
+         return bi_not(I->src[0]);
+
+      FALLTHROUGH;
+
+   case BI_OPCODE_LSHIFT_OR_I32:
+   case BI_OPCODE_LSHIFT_OR_V2I16:
+   case BI_OPCODE_LSHIFT_OR_V4I8:
+   case BI_OPCODE_RSHIFT_OR_I32:
+   case BI_OPCODE_RSHIFT_OR_V2I16:
+   case BI_OPCODE_RSHIFT_OR_V4I8:
+      if (bi_is_zero(I->src[0]) &&
+          I->src[1].bnot &&
+          bi_is_zero(I->src[2]))
+         return I->src[1];
+
+      return bi_null();
+
+   case BI_OPCODE_LSHIFT_AND_I32:
+   case BI_OPCODE_LSHIFT_AND_V2I16:
+   case BI_OPCODE_LSHIFT_AND_V4I8:
+   case BI_OPCODE_RSHIFT_AND_I32:
+   case BI_OPCODE_RSHIFT_AND_V2I16:
+   case BI_OPCODE_RSHIFT_AND_V4I8:
+      if (bi_is_not_zero(I->src[0]) &&
+          I->src[1].bnot &&
+          bi_is_zero(I->src[2]))
+         return I->src[1];
+
+      return bi_null();
+
+   default:
+      return bi_null();
+   }
+}
+
+static void
+bi_try_prop_bnot(unsigned arch, bi_instr *I, unsigned s, const bi_instr *mod)
+{
+   if (!bi_takes_bnot(arch, I, s))
+      return;
+
+   /* Fold -1 to 0.not */
+   if (bi_is_not_zero(I->src[s])) {
+      I->src[s].value = 0;
+      I->src[s].bnot = true;
+      return;
+   }
+
+   bi_index repl = bi_as_bnot(mod);
+   if (bi_is_null(repl))
+      return;
+
+   enum bi_swizzle swizzle = BI_SWIZZLE_H01;
+   if (!bi_try_compose_swizzles(&swizzle, I->src[s].swizzle, repl.swizzle))
+      return;
+
+   if (!bi_op_supports_swizzle(I->op, s, swizzle, arch))
+      return;
+
+   repl.swizzle = swizzle;
+   if (I->src[s].bnot)
+      repl.bnot = !repl.bnot;
+
+   I->src[s] = repl;
+}
+
 /* DISCARD.b32(FCMP.f(x, y)) --> DISCARD.f(x, y) */
 
 static inline bool
@@ -209,19 +321,9 @@ bi_opt_mod_prop_forward(bi_context *ctx)
          if (!mod)
             continue;
 
-         unsigned size = bi_get_opcode_props(I)->size;
-
          bi_fuse_small_int_to_f32(ctx, I, mod);
-
-         if (bi_is_fabsneg(mod->op, size)) {
-            if (mod->src[0].abs && !bi_takes_fabs(ctx->arch, I, mod->src[0], s))
-               continue;
-
-            if (mod->src[0].neg && !bi_takes_fneg(ctx->arch, I, s))
-               continue;
-
-            I->src[s] = bi_compose_float_index(I->src[s], mod->src[0]);
-         }
+         bi_try_prop_fabsneg(ctx->arch, I, s, mod);
+         bi_try_prop_bnot(ctx->arch, I, s, mod);
       }
    }
 
