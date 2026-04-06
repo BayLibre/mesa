@@ -537,7 +537,7 @@ bi_is_ssa(bi_index idx)
 static inline bool
 bi_is_zero(const bi_index idx)
 {
-   return idx.type == BI_INDEX_CONSTANT && idx.value == 0;
+   return idx.type == BI_INDEX_CONSTANT && idx.value == 0 && !idx.neg;
 }
 
 /* Compares equivalence as references. Does not compare offsets, swizzles, or
