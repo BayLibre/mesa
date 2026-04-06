@@ -567,16 +567,19 @@ bi_is_word_equiv(bi_index left, bi_index right)
 static inline bool
 bi_is_value_equiv(bi_index left, bi_index right)
 {
-   if (left.type == BI_INDEX_CONSTANT && right.type == BI_INDEX_CONSTANT) {
-      return (bi_apply_swizzle(left.value, left.swizzle) ==
-              bi_apply_swizzle(right.value, right.swizzle)) &&
-             (left.abs == right.abs) && (left.neg == right.neg);
+   if (left.type != right.type)
+      return false;
+
+   if (left.type == BI_INDEX_CONSTANT) {
+      if (bi_apply_swizzle(left.value, left.swizzle) !=
+          bi_apply_swizzle(right.value, right.swizzle))
+         return false;
    } else {
-      return (left.value == right.value) && (left.abs == right.abs) &&
-             (left.neg == right.neg) && (left.swizzle == right.swizzle) &&
-             (left.offset == right.offset) && (left.type == right.type) &&
-             (left.memory == right.memory);
+      if (!bi_is_word_equiv(left, right))
+         return false;
    }
+
+   return (left.abs == right.abs) && (left.neg == right.neg);
 }
 
 #define BI_MAX_VEC   16
