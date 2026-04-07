@@ -233,9 +233,10 @@ va_resolve_swizzles(bi_context *ctx, bi_instr *I, unsigned s)
    } else if (info.size == VA_SIZE_16) {
       assert(swz >= BI_SWIZZLE_H00 && swz <= BI_SWIZZLE_H11);
       value = bi_apply_swizzle(value, swz);
-   } else if (info.size == VA_SIZE_8 && (info.lane || info.lanes)) {
+   } else if (info.size == VA_SIZE_8 && (info.lane || info.lanes) &&
+              swz >= BI_SWIZZLE_B0 && swz <= BI_SWIZZLE_B3) {
       /* 8-bit extract */
-      unsigned chan = (swz - BI_SWIZZLE_B0000);
+      unsigned chan = (swz - BI_SWIZZLE_B0);
       assert(chan < 4);
 
       value = (value >> (8 * chan)) & 0xFF;
