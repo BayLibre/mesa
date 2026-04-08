@@ -234,6 +234,8 @@ void genX(cmd_buffer_flush_gfx)(struct anv_cmd_buffer *cmd_buffer);
 
 void genX(cmd_buffer_flush_compute_state)(struct anv_cmd_buffer *cmd_buffer);
 
+void genX(cmd_buffer_flush_rt_state)(struct anv_cmd_buffer *cmd_buffer);
+
 void genX(cmd_buffer_enable_pma_fix)(struct anv_cmd_buffer *cmd_buffer,
                                      bool enable);
 

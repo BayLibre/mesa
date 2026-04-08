@@ -1152,28 +1152,13 @@ get_stack_id_reduction_cap(uint32_t stack_ids)
 }
 
 static void
-cmd_buffer_trace_rays(struct anv_cmd_buffer *cmd_buffer,
-                      struct trace_params *params)
+cmd_buffer_flush_rt_state(struct anv_cmd_buffer *cmd_buffer)
 {
    struct anv_device *device = cmd_buffer->device;
    struct anv_cmd_ray_tracing_state *rt = &cmd_buffer->state.rt;
 
-   if (INTEL_DEBUG(DEBUG_RT_NO_TRACE))
-      return;
-
    if (anv_batch_has_error(&cmd_buffer->batch))
       return;
-
-   /* If we have a known degenerate launch size, just bail */
-   if (!params->is_launch_size_indirect &&
-       (params->launch_size[0] == 0 ||
-        params->launch_size[1] == 0 ||
-        params->launch_size[2] == 0))
-      return;
-
-   trace_intel_begin_rays(&cmd_buffer->trace);
-
-   cmd_buffer->state.compute.trace_rays_active = true;
 
    genX(cmd_buffer_config_l3)(cmd_buffer, device->l3_config);
 
@@ -1200,6 +1185,37 @@ cmd_buffer_trace_rays(struct anv_cmd_buffer *cmd_buffer,
                          rt->scratch.bo);
    anv_reloc_list_add_bo(cmd_buffer->batch.relocs,
                          cmd_buffer->device->btd_fifo_bo);
+}
+
+void
+genX(cmd_buffer_flush_rt_state)(struct anv_cmd_buffer *cmd_buffer)
+{
+   cmd_buffer_flush_rt_state(cmd_buffer);
+}
+
+static void
+cmd_buffer_trace_rays(struct anv_cmd_buffer *cmd_buffer,
+                      struct trace_params *params)
+{
+   struct anv_device *device = cmd_buffer->device;
+   struct anv_cmd_ray_tracing_state *rt = &cmd_buffer->state.rt;
+
+   if (INTEL_DEBUG(DEBUG_RT_NO_TRACE))
+      return;
+
+   if (anv_batch_has_error(&cmd_buffer->batch))
+      return;
+
+   /* If we have a known degenerate launch size, just bail */
+   if (!params->is_launch_size_indirect &&
+       (params->launch_size[0] == 0 ||
+        params->launch_size[1] == 0 ||
+        params->launch_size[2] == 0))
+      return;
+
+   trace_intel_begin_rays(&cmd_buffer->trace);
+
+   cmd_buffer->state.compute.trace_rays_active = true;
 
    /* Allocate and set up our RT_DISPATCH_GLOBALS */
    struct anv_state rtdg_state =
@@ -1460,6 +1476,7 @@ genX(CmdTraceRaysKHR)(
       },
    };
 
+   cmd_buffer_flush_rt_state(cmd_buffer);
    cmd_buffer_trace_rays(cmd_buffer, &params);
 }
 
@@ -1483,6 +1500,7 @@ genX(CmdTraceRaysIndirectKHR)(
       .launch_size_addr        = indirectDeviceAddress,
    };
 
+   cmd_buffer_flush_rt_state(cmd_buffer);
    cmd_buffer_trace_rays(cmd_buffer, &params);
 }
 
@@ -1500,6 +1518,7 @@ genX(CmdTraceRaysIndirect2KHR)(
                                  offsetof(VkTraceRaysIndirectCommand2KHR, width),
    };
 
+   cmd_buffer_flush_rt_state(cmd_buffer);
    cmd_buffer_trace_rays(cmd_buffer, &params);
 }
 
