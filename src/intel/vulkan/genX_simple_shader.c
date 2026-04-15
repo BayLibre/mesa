@@ -764,8 +764,7 @@ genX(emit_simple_shader_dispatch)(struct anv_simple_shader *state,
          ggw.ThreadDepthCounterMaximum    = 0;
          ggw.ThreadHeightCounterMaximum   = 0;
          ggw.ThreadWidthCounterMaximum    = dispatch.threads - 1;
-         ggw.ThreadGroupIDXDimension      = DIV_ROUND_UP(num_threads,
-                                                         dispatch.simd_size);
+         ggw.ThreadGroupIDXDimension      = num_threads,
          ggw.ThreadGroupIDYDimension      = 1;
          ggw.ThreadGroupIDZDimension      = 1;
          ggw.RightExecutionMask           = dispatch.right_mask;
