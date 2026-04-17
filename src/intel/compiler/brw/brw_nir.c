@@ -2416,6 +2416,52 @@ brw_nir_should_vectorize_mem(unsigned align_mul, unsigned align_offset,
    return true;
 }
 
+struct brw_vectorize_mem_state {
+   nir_shader *shader;
+   struct hash_table *range_ht;
+   const struct intel_device_info *devinfo;
+};
+
+static bool
+brw_nir_should_vectorize_mem_internal(unsigned align_mul, unsigned align_offset,
+                                      unsigned bit_size,
+                                      unsigned num_components,
+                                      int64_t hole_size,
+                                      nir_intrinsic_instr *low,
+                                      nir_intrinsic_instr *high,
+                                      void *data)
+{
+   struct brw_vectorize_mem_state *state = data;
+
+   /* Avoid combining 2 shared memory loads if the bottom one can be out of
+    * bounds :
+    *
+    * from :
+    *   32   %1 = load_shared -4
+    *   32   %2 = load_shared 0
+    * to :
+    *   32x2 %1 = load_shared -4
+    *
+    * the value returned for the vector load would (0, 0) because LSC will
+    * consider the entire vector OOB, instead of just the first component.
+    */
+   if (state->devinfo->has_lsc &&
+       (low->intrinsic == nir_intrinsic_load_shared ||
+        low->intrinsic == nir_intrinsic_load_shared_uniform_block_intel)) {
+      if (!state->range_ht)
+         state->range_ht = _mesa_pointer_hash_table_create(NULL);
+
+      nir_scalar src = { .def = low->src[0].ssa, .comp = 0 };
+      uint32_t ub = nir_unsigned_upper_bound(state->shader, state->range_ht, src);
+      if (ub > INT32_MAX)
+         return false;
+   }
+
+   return brw_nir_should_vectorize_mem(align_mul, align_offset,
+                                       bit_size, num_components,
+                                       hole_size, low, high, data);
+}
+
 static
 bool combine_all_memory_barriers(nir_intrinsic_instr *a,
                                  nir_intrinsic_instr *b,
@@ -2617,12 +2663,17 @@ brw_vectorize_lower_mem_access(brw_pass_tracker *pt)
 {
    const struct intel_device_info *devinfo = pt->compiler->devinfo;
 
+   struct brw_vectorize_mem_state vect_state = {
+      .shader = pt->nir,
+      .devinfo = devinfo,
+   };
    nir_load_store_vectorize_options options = {
       .modes = nir_var_mem_ubo | nir_var_mem_ssbo |
                nir_var_mem_global | nir_var_mem_shared |
                nir_var_mem_task_payload,
       .round_up_components = lsc_urb_round_up_components,
-      .callback = brw_nir_should_vectorize_mem,
+      .callback = brw_nir_should_vectorize_mem_internal,
+      .cb_data = &vect_state,
       .robust_modes = (nir_variable_mode)0,
    };
 
@@ -2655,7 +2706,8 @@ brw_vectorize_lower_mem_access(brw_pass_tracker *pt)
 
          nir_load_store_vectorize_options ubo_options = {
             .modes = nir_var_mem_ubo,
-            .callback = brw_nir_should_vectorize_mem,
+            .callback = brw_nir_should_vectorize_mem_internal,
+            .cb_data = &vect_state,
             .robust_modes = options.robust_modes & nir_var_mem_ubo,
          };
 
@@ -2705,6 +2757,8 @@ brw_vectorize_lower_mem_access(brw_pass_tracker *pt)
 
       OPT(brw_nir_lower_immediate_offsets);
    }
+
+   _mesa_hash_table_destroy(vect_state.range_ht, NULL);
 }
 
 static bool
