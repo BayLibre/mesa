@@ -33,6 +33,7 @@
 #include "pipe/p_context.h"
 #include "pipe/p_state.h"
 #include "util/u_framebuffer.h"
+#include "lima_pack.h"
 
 struct lima_context_framebuffer {
    struct pipe_framebuffer_state base;
@@ -73,8 +74,7 @@ struct lima_fs_key {
 #define LIMA_MAX_VARYING_NUM 13
 
 struct lima_varying_info {
-   int components;
-   int component_size;
+   enum lima_varying_type type;
    int offset;
 };
 
