@@ -293,7 +293,7 @@ get_device_extensions(const struct anv_physical_device *device,
       .EXT_descriptor_buffer                 = true,
       .EXT_descriptor_indexing               = true,
       .EXT_device_address_binding_report     = true,
-      .EXT_device_generated_commands         = device->info.ver >= 11,
+      .EXT_device_generated_commands         = true,
       .EXT_device_memory_report              = true,
 #ifdef VK_USE_PLATFORM_DISPLAY_KHR
       .EXT_display_control                   = true,
