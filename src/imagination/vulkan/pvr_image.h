@@ -174,4 +174,10 @@ VkResult pvr_image_init(struct pvr_device *device,
                         struct pvr_image *image);
 void pvr_image_fini(struct pvr_device *device, struct pvr_image *image);
 
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
+struct AHardwareBuffer;
+void pvr_image_apply_ahb_layout(struct pvr_image *image,
+                                struct AHardwareBuffer *ahb);
+#endif
+
 #endif /* PVR_IMAGE_H */

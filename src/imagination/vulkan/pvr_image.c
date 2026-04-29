@@ -46,6 +46,14 @@
 #include "vk_util.h"
 #include "wsi_common.h"
 
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
+#include "pvr_android.h"
+#include "vk_android.h"
+#include "vulkan/vk_android_native_buffer.h"
+
+#include <vndk/hardware_buffer.h>
+#endif
+
 static void pvr_image_init_memlayout(struct pvr_image *image)
 {
    switch (image->vk.tiling) {
@@ -258,6 +266,72 @@ static VkResult pvr_pick_modifier(const VkImageCreateInfo *pCreateInfo,
    return VK_SUCCESS;
 }
 
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
+struct pvr_anb_create_info {
+   VkSubresourceLayout layout;
+   VkImageDrmFormatModifierExplicitCreateInfoEXT mod_explicit;
+   VkImageCreateInfo create_info;
+};
+
+/* Build a modified VkImageCreateInfo: override tiling to
+ * DRM_FORMAT_MODIFIER_EXT with an explicit LINEAR modifier so that the DRM
+ * modifier path is taken and we can inject the gralloc stride.
+ */
+static void pvr_anb_create_info_init(struct pvr_anb_create_info *info,
+                                     const VkImageCreateInfo *pCreateInfo,
+                                     const VkNativeBufferANDROID *anb)
+{
+   info->layout = (VkSubresourceLayout){
+      .offset = 0,
+      .size = 0, /* filled in after pvr_image_setup_mip_levels */
+      .rowPitch = (VkDeviceSize)anb->stride *
+                  vk_format_get_blocksize(pCreateInfo->format),
+      .arrayPitch = 0,
+      .depthPitch = 0,
+   };
+   info->mod_explicit = (VkImageDrmFormatModifierExplicitCreateInfoEXT){
+      .sType =
+         VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_EXPLICIT_CREATE_INFO_EXT,
+      .pNext = pCreateInfo->pNext,
+      .drmFormatModifier = DRM_FORMAT_MOD_LINEAR,
+      .drmFormatModifierPlaneCount = 1,
+      .pPlaneLayouts = &info->layout,
+   };
+   info->create_info = *pCreateInfo;
+   info->create_info.tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
+   info->create_info.pNext = &info->mod_explicit;
+}
+
+/* A swapchain image created with deferred memory allocation only learns its
+ * gralloc buffer, and so its pitch, when the loader binds it at acquire time.
+ */
+static VkResult pvr_image_bind_anb(struct pvr_device *device,
+                                   struct pvr_image *image,
+                                   const VkNativeBufferANDROID *anb)
+{
+   struct pvr_anb_create_info anb_info;
+   VkResult result;
+
+   assert(anb && image->vk.android_deferred_create_info);
+
+   pvr_anb_create_info_init(&anb_info,
+                            image->vk.android_deferred_create_info,
+                            anb);
+
+   image->vk.tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
+   result = pvr_image_init(device, &anb_info.create_info, image);
+   if (result != VK_SUCCESS)
+      return result;
+
+   image->planes[0].physical_extent.width = (uint32_t)anb->stride;
+
+   return vk_android_import_anb_memory(&device->vk,
+                                       &image->vk,
+                                       anb,
+                                       &device->vk.alloc);
+}
+#endif /* VK_USE_PLATFORM_ANDROID_KHR */
+
 VkResult pvr_CreateImage(VkDevice _device,
                          const VkImageCreateInfo *pCreateInfo,
                          const VkAllocationCallbacks *pAllocator,
@@ -272,6 +346,65 @@ VkResult pvr_CreateImage(VkDevice _device,
                                                pImage);
    }
 
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
+   /* Android Native Buffer (gralloc swapchain images): the caller passes a
+    * VkNativeBufferANDROID in pNext with the gralloc handle and its pixel
+    * stride.  We must use the gralloc stride for the image pitch so that the
+    * GPU layout matches what the display compositor expects.
+    */
+   const VkNativeBufferANDROID *anb =
+      vk_find_struct_const(pCreateInfo->pNext, NATIVE_BUFFER_ANDROID);
+   if (anb) {
+      struct pvr_anb_create_info anb_info;
+
+      pvr_anb_create_info_init(&anb_info, pCreateInfo, anb);
+
+      image = vk_image_create(&device->vk, &anb_info.create_info, pAllocator,
+                              sizeof(*image));
+      if (!image)
+         return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
+
+      VkResult result = pvr_image_init(device, &anb_info.create_info, image);
+      if (result != VK_SUCCESS) {
+         vk_image_destroy(&device->vk, pAllocator, &image->vk);
+         return result;
+      }
+
+      /* Override the physical extent width to match the gralloc stride so
+       * mip-level computations use the gralloc-provided pitch.
+       * Upstream moved physical_extent into pvr_image_plane (multi-plane);
+       * Android gralloc images are single-plane.
+       */
+      image->planes[0].physical_extent.width = (uint32_t)anb->stride;
+
+      /* Import the gralloc dma-buf and bind it to the image. */
+      result = vk_android_import_anb(&device->vk, pCreateInfo, pAllocator,
+                                     &image->vk);
+      if (result != VK_SUCCESS) {
+         vk_image_destroy(&device->vk, pAllocator, &image->vk);
+         return result;
+      }
+
+      *pImage = pvr_image_to_handle(image);
+      return VK_SUCCESS;
+   }
+
+   /* AHB (VkExternalMemoryImageCreateInfo + ANDROID_HARDWARE_BUFFER handle):
+    * redirect to pvr_android_create_gralloc_image which forces
+    * DRM_FORMAT_MODIFIER_EXT tiling so the image gets PVR_MEMLAYOUT_LINEAR.
+    * OPTIMAL tiling would pick PVR_MEMLAYOUT_TWIDDLED and round up extents to
+    * the next power-of-two, making image->size larger than the AHB allocation
+    * and causing vma_map to fail.  The tiling guard prevents infinite recursion
+    * since pvr_android_create_gralloc_image calls back with
+    * VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT already set.
+    */
+   if (pCreateInfo->tiling != VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT &&
+       pvr_android_is_gralloc_image(pCreateInfo)) {
+      return pvr_android_create_gralloc_image(_device, pCreateInfo, pAllocator,
+                                              pImage);
+   }
+#endif /* VK_USE_PLATFORM_ANDROID_KHR */
+
    image =
       vk_image_create(&device->vk, pCreateInfo, pAllocator, sizeof(*image));
    if (!image)
@@ -282,6 +415,19 @@ VkResult pvr_CreateImage(VkDevice _device,
       vk_image_destroy(&device->vk, pAllocator, &image->vk);
       return result;
    }
+
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
+   if (vk_image_is_android_native_buffer_alias(&image->vk)) {
+      result = vk_android_init_deferred_image(&device->vk,
+                                              &image->vk,
+                                              pCreateInfo,
+                                              pAllocator);
+      if (result != VK_SUCCESS) {
+         vk_image_destroy(&device->vk, pAllocator, &image->vk);
+         return result;
+      }
+   }
+#endif
 
    *pImage = pvr_image_to_handle(image);
 
@@ -371,15 +517,33 @@ VkResult pvr_BindImageMemory2(VkDevice _device,
                               const VkBindImageMemoryInfo *pBindInfos)
 {
    VK_FROM_HANDLE(pvr_device, device, _device);
+   VkResult result;
    uint32_t i;
 
    for (i = 0; i < bindInfoCount; i++) {
       VK_FROM_HANDLE(pvr_device_memory, mem, pBindInfos[i].memory);
       VK_FROM_HANDLE(pvr_image, image, pBindInfos[i].image);
       VkDeviceSize offset = pBindInfos[i].memoryOffset;
-      VkResult result;
 
-#if defined(PVR_USE_WSI_PLATFORM)
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
+      /* Any VkBindImageMemorySwapchainInfoKHR here names a swapchain of the
+       * platform loader, not a Mesa WSI one: the gralloc buffer to bind comes
+       * in the VkNativeBufferANDROID the loader chains in.
+       */
+      if (vk_image_is_android_native_buffer_alias(&image->vk)) {
+         result = pvr_image_bind_anb(
+            device,
+            image,
+            vk_find_struct_const(pBindInfos[i].pNext, NATIVE_BUFFER_ANDROID));
+         if (result != VK_SUCCESS)
+            goto err_unbind;
+
+         VK_FROM_HANDLE(pvr_device_memory, anb_memory, image->vk.anb_memory);
+
+         mem = anb_memory;
+         offset = 0;
+      }
+#elif defined(PVR_USE_WSI_PLATFORM)
       const VkBindImageMemorySwapchainInfoKHR *swapchain_info =
          vk_find_struct_const(pBindInfos[i].pNext,
                               BIND_IMAGE_MEMORY_SWAPCHAIN_INFO_KHR);
@@ -402,18 +566,20 @@ VkResult pvr_BindImageMemory2(VkDevice _device,
                                image->alignment,
                                &image->vma,
                                &image->dev_addr);
-      if (result != VK_SUCCESS) {
-         while (i--) {
-            VK_FROM_HANDLE(pvr_image, image, pBindInfos[i].image);
-
-            pvr_unbind_memory(device, image->vma);
-         }
-
-         return result;
-      }
+      if (result != VK_SUCCESS)
+         goto err_unbind;
    }
 
    return VK_SUCCESS;
+
+err_unbind:
+   while (i--) {
+      VK_FROM_HANDLE(pvr_image, image, pBindInfos[i].image);
+
+      pvr_unbind_memory(device, image->vma);
+   }
+
+   return result;
 }
 
 void pvr_get_image_subresource_layout(const struct pvr_image *image,
@@ -480,3 +646,21 @@ static unsigned get_pbe_stride_align(const struct pvr_device_info *dev_info)
              ? 1
              : ROGUE_PBESTATE_REG_WORD0_LINESTRIDE_UNIT_SIZE;
 }
+
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
+void pvr_image_apply_ahb_layout(struct pvr_image *image,
+                                struct AHardwareBuffer *ahb)
+{
+   AHardwareBuffer_Desc desc;
+
+   if (image->plane_count != 1 || image->memlayout != PVR_MEMLAYOUT_LINEAR)
+      return;
+
+   AHardwareBuffer_describe(ahb, &desc);
+   if (desc.stride == image->planes[0].physical_extent.width)
+      return;
+
+   image->planes[0].physical_extent.width = desc.stride;
+   pvr_image_setup_mip_levels(image);
+}
+#endif

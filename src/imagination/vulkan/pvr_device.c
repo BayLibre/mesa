@@ -38,7 +38,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include <vulkan/vulkan.h>
+#if defined(VK_USE_PLATFORM_ANDROID_KHR)
+#include <vndk/hardware_buffer.h>
+#include <cutils/native_handle.h>
+#endif
 
 #include "hwdef/pvr_hw_utils.h"
 #include "hwdef/rogue_hw_utils.h"
@@ -192,13 +197,13 @@ VkResult pvr_AllocateMemory(VkDevice _device,
                             VkDeviceMemory *pMem)
 {
    const VkImportMemoryFdInfoKHR *fd_info = NULL;
+   VkImportMemoryFdInfoKHR ahb_fd_import = { 0 };
    VK_FROM_HANDLE(pvr_device, device, _device);
    enum pvr_winsys_bo_type type = PVR_WINSYS_BO_TYPE_GPU;
    struct pvr_device_memory *mem;
    VkResult result;
 
    assert(pAllocateInfo->sType == VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO);
-   assert(pAllocateInfo->allocationSize > 0);
 
    const VkMemoryType *mem_type =
       &device->pdevice->memory.memoryTypes[pAllocateInfo->memoryTypeIndex];
@@ -218,6 +223,9 @@ VkResult pvr_AllocateMemory(VkDevice _device,
    if (!mem)
       return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
 
+   /* Exporting a dedicated image as an AHB leaves the size to gralloc. */
+   assert(pAllocateInfo->allocationSize > 0 || mem->vk.ahardware_buffer);
+
    vk_foreach_struct_const (sType, ext, pAllocateInfo->pNext) {
       switch ((unsigned)sType) {
       case VK_STRUCTURE_TYPE_WSI_MEMORY_ALLOCATE_INFO_MESA:
@@ -227,6 +235,11 @@ VkResult pvr_AllocateMemory(VkDevice _device,
       case VK_STRUCTURE_TYPE_IMPORT_MEMORY_FD_INFO_KHR:
          fd_info = ext;
          break;
+#if defined(VK_USE_PLATFORM_ANDROID_KHR) && ANDROID_API_LEVEL >= 26
+      case VK_STRUCTURE_TYPE_IMPORT_ANDROID_HARDWARE_BUFFER_INFO_ANDROID:
+         /* Handled below through mem->vk.ahardware_buffer. */
+         break;
+#endif
       case VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO:
          break;
       case VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO:
@@ -242,6 +255,35 @@ VkResult pvr_AllocateMemory(VkDevice _device,
          break;
       }
    }
+
+#if defined(VK_USE_PLATFORM_ANDROID_KHR) && ANDROID_API_LEVEL >= 26
+   /* The runtime keeps the AHB of an import, and allocates one when the memory
+    * is to be exported as an AHB. Either way that buffer is the memory:
+    * allocating a BO of our own would export something else.
+    */
+   if (mem->vk.ahardware_buffer) {
+      const native_handle_t *handle =
+         AHardwareBuffer_getNativeHandle(mem->vk.ahardware_buffer);
+      assert(handle && handle->numFds > 0);
+      int ahb_fd = dup(handle->data[0]);
+      if (ahb_fd < 0) {
+         result = vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
+         goto err_vk_device_memory_destroy;
+      }
+      ahb_fd_import.sType = VK_STRUCTURE_TYPE_IMPORT_MEMORY_FD_INFO_KHR;
+      ahb_fd_import.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
+      ahb_fd_import.fd = ahb_fd;
+      fd_info = &ahb_fd_import;
+
+      const VkMemoryDedicatedAllocateInfo *dedicated_info =
+         vk_find_struct_const(pAllocateInfo->pNext,
+                              MEMORY_DEDICATED_ALLOCATE_INFO);
+      if (dedicated_info && dedicated_info->image != VK_NULL_HANDLE) {
+         VK_FROM_HANDLE(pvr_image, image, dedicated_info->image);
+         pvr_image_apply_ahb_layout(image, mem->vk.ahardware_buffer);
+      }
+   }
+#endif
 
    if (fd_info && fd_info->handleType) {
       assert(

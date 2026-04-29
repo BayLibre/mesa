@@ -54,6 +54,10 @@
 #include "vk_log.h"
 #include "vk_util.h"
 
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
+#include "vk_android.h"
+#endif
+
 uint32_t pvr_get_pbe_accum_format_size_in_bytes(VkFormat vk_format)
 {
    enum pvr_pbe_accum_format pbe_accum_format;
@@ -700,7 +704,8 @@ pvr_get_image_format_properties(struct pvr_physical_device *pdevice,
       pImageFormatProperties->maxExtent.depth = max_render_size_z;
    }
 
-   if (tiling == VK_IMAGE_TILING_LINEAR) {
+   if (tiling == VK_IMAGE_TILING_LINEAR ||
+       tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT) {
       pImageFormatProperties->maxExtent.depth = 1;
       pImageFormatProperties->maxArrayLayers = 1;
       pImageFormatProperties->sampleCounts = VK_SAMPLE_COUNT_1_BIT;
@@ -755,7 +760,8 @@ pvr_get_image_format_properties(struct pvr_physical_device *pdevice,
     * or VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT, so for simplicity don't
     * support miplevels for these tilings.
     */
-   if (tiling == VK_IMAGE_TILING_LINEAR) {
+   if (tiling == VK_IMAGE_TILING_LINEAR ||
+       tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT) {
       pImageFormatProperties->maxMipLevels = 1;
    } else {
       const uint32_t max_size = MAX3(pImageFormatProperties->maxExtent.width,
@@ -843,6 +849,21 @@ VkResult pvr_GetPhysicalDeviceImageFormatProperties2(
          ycbcr_props->combinedImageSamplerDescriptorCount = 1;
          break;
       }
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
+      case VK_STRUCTURE_TYPE_ANDROID_HARDWARE_BUFFER_USAGE_ANDROID: {
+         /* Tell the caller which AHB usage flags are needed for the
+          * requested Vulkan image usage so that native_window_set_usage()
+          * includes AHARDWAREBUFFER_USAGE_GPU_COLOR_OUTPUT (and friends).
+          * Without this, gralloc allocates buffers without the render-target
+          * flag and WrapAndroidHardwareBuffer fails in HWUI/Skia.
+          */
+         VkAndroidHardwareBufferUsageANDROID *ahb_usage = (void *)ext;
+         ahb_usage->androidHardwareBufferUsage =
+            vk_image_usage_to_ahb_usage(pImageFormatInfo->flags,
+                                        pImageFormatInfo->usage);
+         break;
+      }
+#endif
       default:
          vk_debug_ignored_stype(sType);
          break;
@@ -872,6 +893,31 @@ VkResult pvr_GetPhysicalDeviceImageFormatProperties2(
             VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT |
             VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
          break;
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
+      case VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID:
+         /* AHB images are laid out linearly like the gralloc buffer, which
+          * holds a single level and sample.
+          */
+         pImageFormatProperties->imageFormatProperties.maxMipLevels = 1;
+         pImageFormatProperties->imageFormatProperties.sampleCounts =
+            VK_SAMPLE_COUNT_1_BIT;
+
+         if (!external_props)
+            break;
+
+         /* gralloc lays out the image, so the memory of an AHB image can only
+          * be a dedicated allocation.
+          */
+         external_props->externalMemoryProperties.externalMemoryFeatures =
+            VK_EXTERNAL_MEMORY_FEATURE_DEDICATED_ONLY_BIT |
+            VK_EXTERNAL_MEMORY_FEATURE_EXPORTABLE_BIT |
+            VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT;
+         external_props->externalMemoryProperties.compatibleHandleTypes =
+            VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID;
+         external_props->externalMemoryProperties.exportFromImportedHandleTypes =
+            VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID;
+         break;
+#endif
       default:
          return vk_error(pdevice, VK_ERROR_FORMAT_NOT_SUPPORTED);
       }
@@ -936,6 +982,19 @@ void pvr_GetPhysicalDeviceExternalBufferProperties(
          VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
       /* clang-format on */
       return;
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
+   case VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID:
+      pExternalBufferProperties->externalMemoryProperties =
+         (VkExternalMemoryProperties){
+            .externalMemoryFeatures = VK_EXTERNAL_MEMORY_FEATURE_EXPORTABLE_BIT |
+                                      VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT,
+            .exportFromImportedHandleTypes =
+               VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID,
+            .compatibleHandleTypes =
+               VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID,
+         };
+      return;
+#endif
    default:
       break;
    }
