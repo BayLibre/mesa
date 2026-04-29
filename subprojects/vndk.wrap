@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: CC0-1.0
+# Local VNDK subproject for riscv64 Android (SpacemiT K1)
+# Libraries collected from AOSP trunk_staging build output
+
+[wrap-file]
+directory = vndk
+
+[provide]
+dependency_names = vndk_libc, vndk_libcpp, libbase, liblog, log, libcutils, cutils, libutils, libhardware, hardware, libsystem, libmedia, libdrm, drm, libsync, sync, libnativewindow, nativewindow, android.hardware.graphics.mapper, libmath, libvulkan, android-hwvulkan-headers, cpp_stdlib
