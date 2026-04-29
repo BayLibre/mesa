@@ -1857,8 +1857,25 @@ choose_pdev(struct zink_screen *screen, int64_t dev_major, int64_t dev_minor, ui
       if (idx == -1 && !adapter_luid && !cpu && pdev_count == 1)
          idx = 0;
 
+      /* Fallback for separate display-controller + GPU configurations (e.g.
+       * SpaceMIT K1-X: spacemit DC opens a DRM fd whose major/minor don't
+       * match the PowerVR render node reported by VK_EXT_physical_device_drm).
+       * If no device matched by DRM node, pick the first non-CPU device rather
+       * than failing outright — there is only one 3D-capable GPU anyway.
+       */
+      if (idx == -1 && !cpu && !adapter_luid) {
+         for (uint32_t i = 0; i < pdev_count; i++) {
+            VkPhysicalDeviceProperties tmp_props;
+            VKSCR(GetPhysicalDeviceProperties)(pdevs[i], &tmp_props);
+            if (tmp_props.deviceType != VK_PHYSICAL_DEVICE_TYPE_CPU) {
+               debug_printf("ZINK: DRM node mismatch, falling back to first non-CPU pdev\n");
+               idx = i;
+               break;
+            }
+         }
+      }
+
       if (idx != -1)
-         /* valid cpu device */
          screen->pdev = pdevs[idx];
 
       free(pdevs);
