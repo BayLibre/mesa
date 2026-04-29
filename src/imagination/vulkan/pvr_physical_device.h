@@ -33,6 +33,12 @@
 #   define PVR_USE_WSI_PLATFORM false
 #endif
 
+#if defined(VK_USE_PLATFORM_ANDROID_KHR) || defined(VK_USE_PLATFORM_DISPLAY_KHR) || defined(VK_USE_PLATFORM_WAYLAND_KHR)
+#   define PVR_USE_SYNC_EXTENSIONS true
+#else
+#   define PVR_USE_SYNC_EXTENSIONS false
+#endif
+
 struct pvr_instance;
 typedef struct _pco_ctx pco_ctx;
 

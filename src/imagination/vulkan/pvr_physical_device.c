@@ -136,8 +136,8 @@ static void pvr_physical_device_get_supported_extensions(
       .KHR_external_fence_fd = true,
       .KHR_external_memory = true,
       .KHR_external_memory_fd = true,
-      .KHR_external_semaphore = PVR_USE_WSI_PLATFORM,
-      .KHR_external_semaphore_fd = PVR_USE_WSI_PLATFORM,
+      .KHR_external_semaphore = PVR_USE_SYNC_EXTENSIONS,
+      .KHR_external_semaphore_fd = PVR_USE_SYNC_EXTENSIONS,
       .KHR_format_feature_flags2 = false,
       .KHR_get_memory_requirements2 = true,
       .KHR_incremental_present = PVR_USE_WSI_PLATFORM,
@@ -186,8 +186,13 @@ static void pvr_physical_device_get_supported_extensions(
       .EXT_extended_dynamic_state2 = true,
       .EXT_extended_dynamic_state3 = true,
       .EXT_external_memory_dma_buf = true,
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
+      .ANDROID_external_memory_android_hardware_buffer = true,
+      .ANDROID_native_buffer = true,
+#endif
       .EXT_host_query_reset = true,
       .EXT_image_2d_view_of_3d = true,
+      .EXT_image_drm_format_modifier = true,
       .EXT_index_type_uint8 = false,
       .EXT_line_rasterization = true,
       .EXT_map_memory_placed = true,
@@ -996,6 +1001,7 @@ static bool pvr_device_is_conformant(const struct pvr_device_info *info)
    const uint64_t bvnc = pvr_get_packed_bvnc(info);
    switch (bvnc) {
    case PVR_BVNC_PACK(36, 53, 104, 796):
+   case PVR_BVNC_PACK(36, 29, 52, 182):
       return true;
 
    default:
