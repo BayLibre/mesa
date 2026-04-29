@@ -204,8 +204,13 @@ static void pvr_physical_device_get_supported_extensions(
       .EXT_extended_dynamic_state2 = true,
       .EXT_extended_dynamic_state3 = true,
       .EXT_external_memory_dma_buf = true,
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
+      .ANDROID_external_memory_android_hardware_buffer = true,
+      .ANDROID_native_buffer = true,
+#endif
       .EXT_host_query_reset = true,
       .EXT_image_2d_view_of_3d = true,
+      .EXT_image_drm_format_modifier = true,
       .EXT_index_type_uint8 = true,
       .EXT_inline_uniform_block = true,
       .EXT_line_rasterization = true,
@@ -1110,6 +1115,7 @@ static bool pvr_device_is_conformant(const struct pvr_device_info *info)
    switch (bvnc) {
    case PVR_BVNC_PACK(36, 52, 104, 182):
    case PVR_BVNC_PACK(36, 53, 104, 796):
+   case PVR_BVNC_PACK(36, 29, 52, 182):
       return true;
 
    default:

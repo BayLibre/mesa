@@ -58,6 +58,10 @@ pvr_files = files(
   'pvr_wsi.c',
 )
 
+if with_platform_android
+  pvr_files += files('pvr_android.c')
+endif
+
 pvr_includes = [
   include_directories('winsys'),
   libpowervr_pds_includes,
