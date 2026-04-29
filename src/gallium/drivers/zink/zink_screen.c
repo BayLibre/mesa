@@ -1212,40 +1212,44 @@ zink_init_screen_caps(struct zink_screen *screen)
    /* not about to deal with mesh + non-optimal */
    caps->mesh_shader = screen->info.have_EXT_mesh_shader && screen->optimal_keys;
 
-   caps->mesh.max_task_work_group_total_count = screen->info.mesh_props.maxTaskWorkGroupTotalCount;
-   caps->mesh.max_mesh_work_group_total_count = screen->info.mesh_props.maxMeshWorkGroupTotalCount;
-   caps->mesh.max_task_work_group_invocations = screen->info.mesh_props.maxTaskWorkGroupInvocations;
-   caps->mesh.max_mesh_work_group_invocations = screen->info.mesh_props.maxMeshWorkGroupInvocations;
-   caps->mesh.max_task_payload_size = screen->info.mesh_props.maxTaskPayloadSize;
-   caps->mesh.max_task_shared_memory_size = screen->info.mesh_props.maxTaskSharedMemorySize;
-   caps->mesh.max_mesh_shared_memory_size = screen->info.mesh_props.maxMeshSharedMemorySize;
-   caps->mesh.max_task_payload_and_shared_memory_size = screen->info.mesh_props.maxTaskPayloadAndSharedMemorySize;
-   caps->mesh.max_mesh_payload_and_shared_memory_size = screen->info.mesh_props.maxMeshPayloadAndSharedMemorySize;
-   caps->mesh.max_mesh_output_memory_size = screen->info.mesh_props.maxMeshOutputMemorySize;
-   caps->mesh.max_mesh_payload_and_output_memory_size = screen->info.mesh_props.maxMeshPayloadAndOutputMemorySize;
-   caps->mesh.max_mesh_output_vertices = screen->info.mesh_props.maxMeshOutputVertices;
-   caps->mesh.max_mesh_output_primitives = screen->info.mesh_props.maxMeshOutputPrimitives;
-   caps->mesh.max_mesh_output_components = screen->info.mesh_props.maxMeshOutputComponents;
-   caps->mesh.max_mesh_output_layers = MAX2(screen->info.mesh_props.maxMeshOutputLayers, 1);
-   caps->mesh.max_mesh_multiview_view_count = MAX2(screen->info.mesh_props.maxMeshMultiviewViewCount, 1);
-   caps->mesh.mesh_output_per_vertex_granularity = screen->info.mesh_props.meshOutputPerVertexGranularity;
-   caps->mesh.mesh_output_per_primitive_granularity = screen->info.mesh_props.meshOutputPerPrimitiveGranularity;
+   if (screen->info.have_EXT_mesh_shader) {
+      caps->mesh.max_task_work_group_total_count = screen->info.mesh_props.maxTaskWorkGroupTotalCount;
+      caps->mesh.max_mesh_work_group_total_count = screen->info.mesh_props.maxMeshWorkGroupTotalCount;
+      caps->mesh.max_task_work_group_invocations = screen->info.mesh_props.maxTaskWorkGroupInvocations;
+      caps->mesh.max_mesh_work_group_invocations = screen->info.mesh_props.maxMeshWorkGroupInvocations;
+      caps->mesh.max_task_payload_size = screen->info.mesh_props.maxTaskPayloadSize;
+      caps->mesh.max_task_shared_memory_size = screen->info.mesh_props.maxTaskSharedMemorySize;
+      caps->mesh.max_mesh_shared_memory_size = screen->info.mesh_props.maxMeshSharedMemorySize;
+      caps->mesh.max_task_payload_and_shared_memory_size = screen->info.mesh_props.maxTaskPayloadAndSharedMemorySize;
+      caps->mesh.max_mesh_payload_and_shared_memory_size = screen->info.mesh_props.maxMeshPayloadAndSharedMemorySize;
+      caps->mesh.max_mesh_output_memory_size = screen->info.mesh_props.maxMeshOutputMemorySize;
+      caps->mesh.max_mesh_payload_and_output_memory_size = screen->info.mesh_props.maxMeshPayloadAndOutputMemorySize;
+      caps->mesh.max_mesh_output_vertices = screen->info.mesh_props.maxMeshOutputVertices;
+      caps->mesh.max_mesh_output_primitives = screen->info.mesh_props.maxMeshOutputPrimitives;
+      caps->mesh.max_mesh_output_components = screen->info.mesh_props.maxMeshOutputComponents;
+      caps->mesh.max_mesh_output_layers = MAX2(screen->info.mesh_props.maxMeshOutputLayers, 1);
+      caps->mesh.max_mesh_multiview_view_count = MAX2(screen->info.mesh_props.maxMeshMultiviewViewCount, 1);
+      caps->mesh.mesh_output_per_vertex_granularity = screen->info.mesh_props.meshOutputPerVertexGranularity;
+      caps->mesh.mesh_output_per_primitive_granularity = screen->info.mesh_props.meshOutputPerPrimitiveGranularity;
 
-   caps->mesh.max_preferred_task_work_group_invocations = screen->info.mesh_props.maxPreferredTaskWorkGroupInvocations;
-   caps->mesh.max_preferred_mesh_work_group_invocations = screen->info.mesh_props.maxPreferredMeshWorkGroupInvocations;
-   caps->mesh.mesh_prefers_local_invocation_vertex_output = screen->info.mesh_props.prefersLocalInvocationVertexOutput;
-   caps->mesh.mesh_prefers_local_invocation_primitive_output = screen->info.mesh_props.prefersLocalInvocationPrimitiveOutput;
-   caps->mesh.mesh_prefers_compact_vertex_output = screen->info.mesh_props.prefersCompactVertexOutput;
-   caps->mesh.mesh_prefers_compact_primitive_output = screen->info.mesh_props.prefersCompactPrimitiveOutput;
+      caps->mesh.max_preferred_task_work_group_invocations = screen->info.mesh_props.maxPreferredTaskWorkGroupInvocations;
+      caps->mesh.max_preferred_mesh_work_group_invocations = screen->info.mesh_props.maxPreferredMeshWorkGroupInvocations;
+      caps->mesh.mesh_prefers_local_invocation_vertex_output = screen->info.mesh_props.prefersLocalInvocationVertexOutput;
+      caps->mesh.mesh_prefers_local_invocation_primitive_output = screen->info.mesh_props.prefersLocalInvocationPrimitiveOutput;
+      caps->mesh.mesh_prefers_compact_vertex_output = screen->info.mesh_props.prefersCompactVertexOutput;
+      caps->mesh.mesh_prefers_compact_primitive_output = screen->info.mesh_props.prefersCompactPrimitiveOutput;
 
-   for (unsigned i = 0; i < 3; i++) {
-      caps->mesh.max_task_work_group_count[i] = screen->info.mesh_props.maxTaskWorkGroupCount[i];
-      caps->mesh.max_mesh_work_group_count[i] = screen->info.mesh_props.maxMeshWorkGroupCount[i];
-      caps->mesh.max_task_work_group_size[i] = screen->info.mesh_props.maxTaskWorkGroupSize[i];
-      caps->mesh.max_mesh_work_group_size[i] = screen->info.mesh_props.maxMeshWorkGroupSize[i];
+      for (unsigned i = 0; i < 3; i++) {
+         caps->mesh.max_task_work_group_count[i] = screen->info.mesh_props.maxTaskWorkGroupCount[i];
+         caps->mesh.max_mesh_work_group_count[i] = screen->info.mesh_props.maxMeshWorkGroupCount[i];
+         caps->mesh.max_task_work_group_size[i] = screen->info.mesh_props.maxTaskWorkGroupSize[i];
+         caps->mesh.max_mesh_work_group_size[i] = screen->info.mesh_props.maxMeshWorkGroupSize[i];
+      }
+
+      caps->mesh.pipeline_statistic_queries = screen->info.mesh_feats.meshShaderQueries;
+   } else {
+      memset(&caps->mesh, 0, sizeof(caps->mesh));
    }
-
-   caps->mesh.pipeline_statistic_queries = screen->info.mesh_feats.meshShaderQueries;
 
    if (screen->info.feats12.subgroupBroadcastDynamicId && screen->info.feats12.shaderSubgroupExtendedTypes && screen->info.feats.features.shaderFloat64) {
       caps->shader_subgroup_size = screen->info.subgroup.subgroupSize;
