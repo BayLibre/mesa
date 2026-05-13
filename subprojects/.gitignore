@@ -2,3 +2,10 @@
 !*.wrap
 !packagefiles/**
 !.gitignore
+
+# Track the local vndk subproject (riscv64 Android stubs for K1 BSP).
+# These files are collected from an AOSP build and shipped here so a
+# fresh `meson setup` of the cross-build does not need a separate
+# manual extraction step.
+!vndk/
+!vndk/**
