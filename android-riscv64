@@ -10,12 +10,20 @@ toolchain = ndk / 'toolchains/llvm/prebuilt/linux-x86_64/bin'
 
 vndk_includes = ['-isystem', vndk / 'external/libdrm', '-isystem', vndk / 'external/libdrm/include/drm', '-isystem', vndk / 'system/core/libcutils/include_outside_system', '-isystem', vndk / 'system/core/libsystem/include', '-isystem', vndk / 'system/core/libsync/include', '-isystem', vndk / 'system/logging/liblog/include_vndk', '-isystem', vndk / 'hardware/libhardware/include', '-isystem', vndk / 'frameworks/native/libs/nativewindow/include', '-isystem', vndk / 'frameworks/native/libs/nativebase/include', '-isystem', vndk / 'frameworks/native/vulkan/include', '-isystem', vndk / 'frameworks/native/libs/math/include']
 
+# SpaceMit K1 / X60 tuning:
+#   -march enables all ISA extensions the X60 exposes (see /proc/cpuinfo),
+#          beyond the AOSP rv64gcv_zba_zbb_zbs baseline.
+#   -mcpu/-mtune=spacemit-x60 enables clang's X60-specific instruction
+#          scheduling (latency model + pipeline).
+# Binaries produced will not run on RISC-V cores lacking these extensions.
+riscv64_x60_arch = ['-march=rv64gcv_zba_zbb_zbs_zicond_zfh_zvfh_zicboz_zicbop_zbc_zkt', '-mcpu=spacemit-x60', '-mtune=spacemit-x60']
+
 [properties]
 cpp_stdlib = 'vndk'
 
 [built-in options]
-c_args = ['-target', target] + vndk_includes
-cpp_args = ['-target', target] + vndk_includes
+c_args = ['-target', target] + riscv64_x60_arch + vndk_includes
+cpp_args = ['-target', target] + riscv64_x60_arch + vndk_includes
 
 [binaries]
 c = toolchain / target + '-clang'
