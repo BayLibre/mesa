@@ -20,6 +20,7 @@
 extern "C" {
 #endif
 
+#if 0
 inline _LIBCPP_INLINE_VISIBILITY int isalnum_l(int c, locale_t) {
   return ::isalnum(c);
 }
@@ -67,6 +68,7 @@ inline _LIBCPP_INLINE_VISIBILITY int isupper_l(int c, locale_t) {
 inline _LIBCPP_INLINE_VISIBILITY int isxdigit_l(int c, locale_t) {
   return ::isxdigit(c);
 }
+#endif
 
 inline _LIBCPP_INLINE_VISIBILITY int iswalnum_l(wint_t c, locale_t) {
   return ::iswalnum(c);
@@ -116,6 +118,7 @@ inline _LIBCPP_INLINE_VISIBILITY int iswxdigit_l(wint_t c, locale_t) {
   return ::iswxdigit(c);
 }
 
+#if 0
 inline _LIBCPP_INLINE_VISIBILITY int toupper_l(int c, locale_t) {
   return ::toupper(c);
 }
@@ -127,6 +130,7 @@ inline _LIBCPP_INLINE_VISIBILITY int tolower_l(int c, locale_t) {
 inline _LIBCPP_INLINE_VISIBILITY wint_t towupper_l(wint_t c, locale_t) {
   return ::towupper(c);
 }
+#endif
 
 inline _LIBCPP_INLINE_VISIBILITY wint_t towlower_l(wint_t c, locale_t) {
   return ::towlower(c);
