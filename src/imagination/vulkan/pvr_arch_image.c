@@ -121,7 +121,13 @@ VkResult PVR_PER_ARCH(CreateImageView)(VkDevice _device,
    info.sample_count = image->vk.samples;
    info.addr = image->dev_addr;
 
-   info.format = pCreateInfo->format;
+   /* Not pCreateInfo->format: an image view onto an Android hardware buffer
+    * with an external format is created with VK_FORMAT_UNDEFINED, and the
+    * runtime resolves the real format into vk.view_format. Reading the raw
+    * create info here left the format undefined, which has no texture-state
+    * encoding, so packing the texture state failed for every such view.
+    */
+   info.format = iview->vk.view_format;
    info.layer_size = plane->layer_size;
 
    if (image->vk.create_flags & VK_IMAGE_CREATE_2D_VIEW_COMPATIBLE_BIT_EXT) {
