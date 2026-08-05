@@ -187,8 +187,18 @@ VkResult pvr_arch_pack_tex_state(struct pvr_device *device,
        * The driver must select the correct single aspect format when sampling
        * to avoid this.
        */
-      word0.texformat =
+      uint32_t texformat =
          pvr_arch_get_tex_format_aspect(info->format, info->aspect_mask);
+
+      /* The format has no texture-state encoding on this hardware. Bail out
+       * rather than packing the sentinel: it does not fit the seven bit
+       * texformat field, so pvr_csb_pack() would assert instead of letting the
+       * caller report the format as unsupported.
+       */
+      if (texformat == ROGUE_TEXSTATE_FORMAT_INVALID)
+         return vk_error(device, VK_ERROR_FORMAT_NOT_SUPPORTED);
+
+      word0.texformat = texformat;
 
       if (info->swap_chroma) {
          word0.texformat = pvr_chroma_swap_format(word0.texformat);
