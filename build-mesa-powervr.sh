@@ -13,6 +13,30 @@ BUILD_NATIVE="build-compiler"
 BUILD_ANDROID="build-riscv64-linux-android"
 SPIRV_HOST_PREFIX="$SCRIPT_DIR/spirv-tools-host"
 MESA_COMPILER_PREFIX="/tmp/mesa-compiler"
+
+usage() {
+    cat <<EOF
+Usage: $(basename "$0") [--aosp=<path>]
+
+  --aosp=<path>  AOSP tree to build against and deploy into.
+                 Default: $(dirname "$SCRIPT_DIR")/aosp
+  -h, --help     Affiche cette aide.
+EOF
+}
+
+for arg in "$@"; do
+    case "$arg" in
+        --aosp=*) AOSP_DIR="${arg#*=}" ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo -e "${RED}ERREUR: option inconnue: $arg${NC}" >&2; usage >&2; exit 1 ;;
+    esac
+done
+
+# Both the SPIRV-Tools sources and the Mesa prebuilt destination live in the
+# same tree, so an --aosp override has to apply to both or the blobs get built
+# against one tree and installed into another.
+[ -d "$AOSP_DIR" ] || { echo -e "${RED}ERREUR: arbre AOSP introuvable: $AOSP_DIR${NC}" >&2; exit 1; }
+AOSP_DIR="$(cd "$AOSP_DIR" && pwd)"
 DEVICE_MESA="$AOSP_DIR/device/spacemit/k1/mesa/lib64"
 
 echo -e "${GREEN}=== Build Mesa PowerVR pour Android riscv64 ===${NC}"
