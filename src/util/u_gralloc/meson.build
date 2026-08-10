@@ -22,6 +22,10 @@ if dep_android_ui.found()
   c_args_for_u_gralloc += '-DUSE_IMAPPER4_METADATA_API'
   cpp_args_for_u_gralloc += '-DUSE_IMAPPER4_METADATA_API'
   options_for_u_gralloc += 'cpp_std=c++17'
+  # Without this the IMapper5 backend compiles with no libui/AIDL include path
+  # and fails on <aidl/.../BufferUsage.h>. The mapper4 branch below does add its
+  # dependency; this branch never did.
+  deps_for_u_gralloc += dep_android_ui
 elif dep_android_mapper4.found()
   files_u_gralloc += files('u_gralloc_imapper4_api.cpp')
   c_args_for_u_gralloc += '-DUSE_IMAPPER4_METADATA_API'
