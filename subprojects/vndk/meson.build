@@ -88,10 +88,7 @@ libmath_dep = declare_dependency(
 )
 meson.override_dependency('libmath', libmath_dep)
 
-# Note: libui/ui dependency is intentionally NOT overridden here.
-# IMapper5 (SDK >= 35) requires AIDL framework headers (android/binder_enums.h etc.)
-# that aren't part of the VNDK prebuilts. Without the ui override, Mesa falls back
-# to IMapper4 via android.hardware.graphics.mapper@4.0 which works fine.
+# libui/ui is overridden further down, after libnativewindow_dep exists.
 
 vndk_libcpp_dep = declare_dependency(
     dependencies : [
@@ -118,6 +115,40 @@ libnativewindow_dep = declare_dependency(
     ])
 meson.override_dependency('libnativewindow', libnativewindow_dep)
 meson.override_dependency('nativewindow', libnativewindow_dep)
+
+# Overriding 'ui' is what selects u_gralloc's IMapper5 backend over the IMapper4
+# one. It is required on devices that ship only the stable-C mapper: A17 has no
+# HIDL @4.0 mapper service, so the IMapper4 backend never activates and Mesa
+# silently degrades to the fallback gralloc, which cannot resolve a DRM fourcc for
+# YUV buffers. The AIDL and binder-NDK headers this needs are in the snapshot
+# already — the same ones graphics_mapper_dep below uses.
+libui_dep = declare_dependency(
+    dependencies : [
+      cxx.find_library('ui', dirs : prebuild_libraries),
+      cxx.find_library('libhidlbase', dirs : prebuild_libraries),
+      cxx.find_library('libgralloctypes', dirs : prebuild_libraries),
+      libutils_dep,
+      libbase_dep,
+      libnativewindow_dep,
+      libmath_dep,
+    ],
+    include_directories : [
+      include_directories(include_base / 'frameworks/native/libs/ui/include'),
+      include_directories(include_base / 'frameworks/native/libs/arect/include'),
+      include_directories(include_base / 'frameworks/native/libs/gralloc/types/include'),
+      include_directories(include_base / 'frameworks/native/libs/binder/ndk/include_cpp'),
+      include_directories(include_base / 'generated-headers/hardware/interfaces/graphics/common/aidl/android.hardware.graphics.common-V4-ndk-source/gen/include'),
+      # ui/GraphicTypes.h pulls the HIDL graphics.common types in
+      include_directories(include_base / 'generated-headers/hardware/interfaces/graphics/common/1.0/android.hardware.graphics.common@1.0_genc++_headers/gen'),
+      include_directories(include_base / 'generated-headers/hardware/interfaces/graphics/common/1.1/android.hardware.graphics.common@1.1_genc++_headers/gen'),
+      include_directories(include_base / 'generated-headers/hardware/interfaces/graphics/common/1.2/android.hardware.graphics.common@1.2_genc++_headers/gen'),
+      include_directories(include_base / 'generated-headers/system/libhidl/transport/base/1.0/android.hidl.base@1.0_genc++_headers/gen'),
+      include_directories(include_base / 'generated-headers/system/libhidl/transport/manager/1.0/android.hidl.manager@1.0_genc++_headers/gen'),
+      include_directories(include_base / 'system/libhidl/base/include'),
+      include_directories(include_base / 'system/libfmq/base'),
+    ])
+meson.override_dependency('libui', libui_dep)
+meson.override_dependency('ui', libui_dep)
 
 graphics_mapper_dep = declare_dependency(
     version : '4.0',
