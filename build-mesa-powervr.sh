@@ -13,13 +13,16 @@ BUILD_NATIVE="build-compiler"
 BUILD_ANDROID="build-riscv64-linux-android"
 SPIRV_HOST_PREFIX="$SCRIPT_DIR/spirv-tools-host"
 MESA_COMPILER_PREFIX="/tmp/mesa-compiler"
+SKIP_NATIVE=0
 
 usage() {
     cat <<EOF
-Usage: $(basename "$0") [--aosp=<path>]
+Usage: $(basename "$0") [--aosp=<path>] [--skip-native]
 
   --aosp=<path>  AOSP tree to build against and deploy into.
                  Default: $(dirname "$SCRIPT_DIR")/aosp
+  --skip-native  Reuse the native tools already installed in
+                 $MESA_COMPILER_PREFIX instead of rebuilding them.
   -h, --help     Affiche cette aide.
 EOF
 }
@@ -27,6 +30,7 @@ EOF
 for arg in "$@"; do
     case "$arg" in
         --aosp=*) AOSP_DIR="${arg#*=}" ;;
+        --skip-native) SKIP_NATIVE=1 ;;
         -h|--help) usage; exit 0 ;;
         *) echo -e "${RED}ERREUR: option inconnue: $arg${NC}" >&2; usage >&2; exit 1 ;;
     esac
@@ -250,7 +254,7 @@ export PATH="$MESA_COMPILER_PREFIX/bin:$PATH"
 # Sans LD_LIBRARY_PATH, le linker dynamique ne trouve pas la .so au runtime.
 export LD_LIBRARY_PATH="$SPIRV_HOST_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
-if [ "$1" != "--skip-native" ]; then
+if [ "$SKIP_NATIVE" -eq 0 ]; then
     echo -e "${GREEN}=== Étape 1/3: Compilation des outils natifs ===${NC}"
 
     cd "$MESA_DIR"
