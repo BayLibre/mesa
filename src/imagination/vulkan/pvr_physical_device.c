@@ -1002,6 +1002,7 @@ static bool pvr_device_is_conformant(const struct pvr_device_info *info)
    switch (bvnc) {
    case PVR_BVNC_PACK(36, 53, 104, 796):
    case PVR_BVNC_PACK(36, 29, 52, 182):
+   case PVR_BVNC_PACK(36, 56, 104, 183):
       return true;
 
    default:
