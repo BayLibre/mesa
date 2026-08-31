@@ -92,12 +92,21 @@ static void pvr_image_plane_init_physical_extent(
       image->memlayout == PVR_MEMLAYOUT_TWIDDLED ||
       image->memlayout == PVR_MEMLAYOUT_3DTWIDDLED) {
       /* clang-format on */
+      const struct util_format_description *fmt = vk_format_description(
+         vk_format_get_plane_format(image->vk.format, i));
+
       plane->physical_extent.width =
-         util_next_power_of_two(image->vk.extent.width);
+         util_next_power_of_two(
+            DIV_ROUND_UP(image->vk.extent.width, fmt->block.width)) *
+         fmt->block.width;
       plane->physical_extent.height =
-         util_next_power_of_two(image->vk.extent.height);
+         util_next_power_of_two(
+            DIV_ROUND_UP(image->vk.extent.height, fmt->block.height)) *
+         fmt->block.height;
       plane->physical_extent.depth =
-         util_next_power_of_two(image->vk.extent.depth);
+         util_next_power_of_two(
+            DIV_ROUND_UP(image->vk.extent.depth, fmt->block.depth)) *
+         fmt->block.depth;
    } else {
       assert(image->memlayout == PVR_MEMLAYOUT_LINEAR);
       plane->physical_extent = image->vk.extent;
