@@ -236,6 +236,10 @@ void pvr_get_hw_clear_color(
 static inline const struct pvr_format *
 pvr_get_format(struct pvr_physical_device *pdevice, VkFormat vk_format)
 {
+   if (!PVR_HAS_FEATURE(&pdevice->dev_info, astc) &&
+       vk_format_description(vk_format)->layout == UTIL_FORMAT_LAYOUT_ASTC)
+      return NULL;
+
    enum pipe_format format = vk_format_to_pipe_format(vk_format);
    if (format < pdevice->formats.count &&
        pdevice->formats.formats[format].bind != 0) {

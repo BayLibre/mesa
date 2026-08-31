@@ -267,7 +267,7 @@ static void pvr_physical_device_get_supported_features(
       .multiViewport = false,
       .samplerAnisotropy = true,
       .textureCompressionETC2 = true,
-      .textureCompressionASTC_LDR = false,
+      .textureCompressionASTC_LDR = PVR_HAS_FEATURE(dev_info, astc),
       .textureCompressionBC = false,
       .occlusionQueryPrecise = false,
       .pipelineStatisticsQuery = false,
