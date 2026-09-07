@@ -15,10 +15,11 @@ SPIRV_HOST_PREFIX="$SCRIPT_DIR/spirv-tools-host"
 MESA_COMPILER_PREFIX="/tmp/mesa-compiler"
 SKIP_NATIVE=0
 BOARD="k1"
+BUILD_ARM64=0
 
 usage() {
     cat <<EOF
-Usage: $(basename "$0") [--aosp=<path>] [--board=<k1|k3|a210>] [--skip-native]
+Usage: $(basename "$0") [--aosp=<path>] [--board=<k1|k3|a210>] [--skip-native] [--build-arm64]
 
   --aosp=<path>  AOSP tree to build against and deploy into.
                  Default: $(dirname "$SCRIPT_DIR")/aosp
@@ -26,6 +27,7 @@ Usage: $(basename "$0") [--aosp=<path>] [--board=<k1|k3|a210>] [--skip-native]
                  (SpaceMit K3/X100), or a210 (Zhihe A210 EVB).
   --skip-native  Reuse the native tools already installed in
                  $MESA_COMPILER_PREFIX instead of rebuilding them.
+  --build-arm64  Build Mesa PowerVR libraries for arm64 devices.
   -h, --help     Affiche cette aide.
 EOF
 }
@@ -35,6 +37,7 @@ for arg in "$@"; do
         --aosp=*) AOSP_DIR="${arg#*=}" ;;
         --board=*) BOARD="${arg#*=}" ;;
         --skip-native) SKIP_NATIVE=1 ;;
+        --build-arm64) BUILD_ARM64=1 ;;
         -h|--help) usage; exit 0 ;;
         *) echo -e "${RED}ERREUR: option inconnue: $arg${NC}" >&2; usage >&2; exit 1 ;;
     esac
@@ -62,6 +65,11 @@ case "$BOARD" in
         CROSS_FILE="$SCRIPT_DIR/android-riscv64-a210"
         DEVICE_MESA="$AOSP_DIR/device/alibaba/a210/mesa/lib64"
         LUNCH_TARGET="aosp_a210_evb-trunk_staging-userdebug"
+        ;;
+    rzg2n)
+        CROSS_FILE="$SCRIPT_DIR/android-aarch64"
+        DEVICE_MESA="$AOSP_DIR/vendor/oss/mesa_powervr/lib64"
+        LUNCH_TARGET="hihope_rzg2n-cp2a-userdebug"
         ;;
     *)
         echo -e "${RED}ERREUR: board inconnu: $BOARD (attendu: k1, k3, a210)${NC}" >&2
@@ -314,7 +322,11 @@ fi
 # ---------------------------------------------------------------------------
 # Étape 2: Cross-compilation pour Android riscv64
 # ---------------------------------------------------------------------------
+if [ "$BUILD_ARM64" -eq 1 ]; then
+echo -e "${GREEN}=== Étape 2/3: Cross-compilation pour Android arm64 ===${NC}"
+else
 echo -e "${GREEN}=== Étape 2/3: Cross-compilation pour Android riscv64 ===${NC}"
+fi
 
 cd "$MESA_DIR"
 rm -rf "$BUILD_ANDROID"
@@ -368,7 +380,11 @@ meson setup "$BUILD_ANDROID" \
   -Dgbm-backends-path=/vendor/lib64/gbm
 
 ninja -C "$BUILD_ANDROID" -j"$(nproc)"
+if [ "$BUILD_ARM64" -eq 1 ]; then
+echo -e "${GREEN}✓ Mesa Android arm64 compilé${NC}"
+else
 echo -e "${GREEN}✓ Mesa Android riscv64 compilé${NC}"
+fi
 
 # ---------------------------------------------------------------------------
 # Étape 3: Deploy dans l'AOSP device tree
@@ -431,6 +447,25 @@ echo -e "${GREEN}✓${NC} SONAME libgbm_mesa.so.1 → libgbm_mesa.so (patchelf)"
 deploy "$B/src/egl/libEGL.so.1.0.0"                      "$DEVICE_MESA/egl/libGLES_mesa.so"
 deploy "$B/src/mesa/glapi/es1api/libGLESv1_CM.so.1.1.0"  "$DEVICE_MESA/egl/libGLESv1_CM.so"
 deploy "$B/src/mesa/glapi/es2api/libGLESv2.so.2.0.0"     "$DEVICE_MESA/egl/libGLESv2.so"
+
+# Required steps to avoid issue
+# error: DT_SONAME "xxxxx.so.x" must be equal to the file name "xxxxx.so"
+if [ "$BUILD_ARM64" -eq 1 ]; then
+patchelf --set-soname libGLES_mesa.so "$DEVICE_MESA/egl/libGLES_mesa.so"
+patchelf --set-soname libGLESv1_CM.so "$DEVICE_MESA/egl/libGLESv1_CM.so"
+patchelf --set-soname libGLESv2.so "$DEVICE_MESA/egl/libGLESv2.so"
+patchelf --set-soname vulkan.mesa.so "$DEVICE_MESA/hw/vulkan.mesa.so"
+patchelf --set-soname spacemit_dri.so "$DEVICE_MESA/dri/spacemit_dri.so"
+patchelf --set-soname powervr_dri.so "$DEVICE_MESA/dri/powervr_dri.so"
+patchelf --set-soname zink_dri.so "$DEVICE_MESA/dri/zink_dri.so"
+echo -e "${GREEN}✓${NC} SONAME libGLES_mesa.so (libEGL.so.1) → libGLES_mesa.so (patchelf)"
+echo -e "${GREEN}✓${NC} SONAME libGLESv1_CM.so.1 → libGLESv1_CM.so (patchelf)"
+echo -e "${GREEN}✓${NC} SONAME libGLESv2.so.2 → libGLESv2.so (patchelf)"
+echo -e "${GREEN}✓${NC} SONAME vulkan.mesa.so (libvulkan_powervr_mesa.so) → vulkan.mesa.so (patchelf)"
+echo -e "${GREEN}✓${NC} SONAME spacemit_dri.so → spacemit_dri.so (patchelf)"
+echo -e "${GREEN}✓${NC} SONAME powervr_dri.so (libgallium_dri.so) → powervr_dri.so (patchelf)"
+echo -e "${GREEN}✓${NC} SONAME zink_dri.so (libgallium_dri.so) → zink_dri.so (patchelf)"
+fi
 
 echo ""
 echo -e "${GREEN}=== Build + deploy terminé ! ===${NC}"
