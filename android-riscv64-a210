@@ -1,0 +1,48 @@
+[constants]
+aosp = '@DIRNAME@' / '..' / 'aosp'
+toolchain = aosp / 'prebuilts/clang/host/linux-x86/clang-r584948b/bin'
+sysroot = aosp / 'out/soong/ndk/sysroot'
+ndklib = sysroot / 'usr/lib/riscv64-linux-android/current'
+bionic = aosp / 'out/soong/.intermediates/bionic/libc'
+# Meson's executable link checks need CRTs absent from the NDK stub sysroot.
+crtbegin = bionic / 'crtbegin_dynamic/android_riscv64_a210'
+crtend = bionic / 'crtend_android/android_riscv64_a210'
+crtbrand = bionic / 'crtbrand/android_riscv64_a210'
+
+product = aosp / 'out/target/product/a210'
+vendorlib64 = product / 'vendor/lib64'
+systemlib64 = product / 'system/lib64'
+
+triple = 'riscv64-linux-android'
+android_api_level = '35'
+target = triple + android_api_level
+
+riscv64_a210_arch = ['-march=rv64imafdcv_zicbom_zicbop_zicboz_zicntr_zicsr_zifencei_zihintpause_zihpm_zfh_zba_zbb_zbc_zbs_zvfh_xtheadba_xtheadbb_xtheadbs_xtheadcmo_xtheadcondmov_xtheadfmemidx_xtheadmac_xtheadmemidx_xtheadmempair_xtheadsync_xtheadvdot', '-mimplicit-float']
+
+vendor_includes = ['-isystem', aosp / 'external/libdrm', '-isystem', aosp / 'external/libdrm/include/drm', '-isystem', aosp / 'system/core/libcutils/include', '-isystem', aosp / 'system/core/libcutils/include_outside_system', '-isystem', aosp / 'system/core/libsystem/include', '-isystem', aosp / 'system/core/libsync/include', '-isystem', aosp / 'system/logging/liblog/include', '-isystem', aosp / 'system/logging/liblog/include_vndk', '-isystem', aosp / 'hardware/libhardware/include', '-isystem', aosp / 'frameworks/native/libs/nativewindow/include', '-isystem', aosp / 'frameworks/native/libs/nativebase/include', '-isystem', aosp / 'frameworks/native/vulkan/include', '-isystem', aosp / 'frameworks/native/libs/math/include']
+
+[properties]
+sys_root = sysroot
+needs_exe_wrapper = true
+pkg_config_libdir = []
+
+[built-in options]
+c_args = ['--target=' + target, '--sysroot=' + sysroot] + riscv64_a210_arch + vendor_includes
+# Platform libc++ headers are not bundled with the riscv64 toolchain.
+cpp_args = ['--target=' + target, '--sysroot=' + sysroot, '-isystem', aosp / 'external/libcxx/include'] + riscv64_a210_arch + vendor_includes
+c_link_args = ['--target=' + target, '--sysroot=' + sysroot, '-B' + ndklib, '-L' + vendorlib64, '-L' + systemlib64, '-L' + ndklib, '-B' + crtbegin, '-B' + crtend, '-B' + crtbrand] + riscv64_a210_arch
+cpp_link_args = c_link_args
+
+[binaries]
+c = toolchain / 'clang'
+cpp = toolchain / 'clang++'
+ar = toolchain / 'llvm-ar'
+strip = toolchain / 'llvm-strip'
+config = toolchain / 'llvm-config'
+pkg-config = 'pkg-config'
+
+[host_machine]
+system = 'linux'
+cpu_family = 'riscv64'
+cpu = 'riscv64'
+endian = 'little'
