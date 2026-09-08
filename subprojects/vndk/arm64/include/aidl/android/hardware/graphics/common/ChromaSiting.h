@@ -21,6 +21,8 @@ enum class ChromaSiting : int64_t {
   UNKNOWN = 1L,
   SITED_INTERSTITIAL = 2L,
   COSITED_HORIZONTAL = 3L,
+  COSITED_VERTICAL = 4L,
+  COSITED_BOTH = 5L,
 };
 
 }  // namespace common
@@ -43,6 +45,10 @@ namespace common {
     return "SITED_INTERSTITIAL";
   case ChromaSiting::COSITED_HORIZONTAL:
     return "COSITED_HORIZONTAL";
+  case ChromaSiting::COSITED_VERTICAL:
+    return "COSITED_VERTICAL";
+  case ChromaSiting::COSITED_BOTH:
+    return "COSITED_BOTH";
   default:
     return std::to_string(static_cast<int64_t>(val));
   }
@@ -57,11 +63,13 @@ namespace internal {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wc++17-extensions"
 template <>
-constexpr inline std::array<aidl::android::hardware::graphics::common::ChromaSiting, 4> enum_values<aidl::android::hardware::graphics::common::ChromaSiting> = {
+constexpr inline std::array<aidl::android::hardware::graphics::common::ChromaSiting, 6> enum_values<aidl::android::hardware::graphics::common::ChromaSiting> = {
   aidl::android::hardware::graphics::common::ChromaSiting::NONE,
   aidl::android::hardware::graphics::common::ChromaSiting::UNKNOWN,
   aidl::android::hardware::graphics::common::ChromaSiting::SITED_INTERSTITIAL,
   aidl::android::hardware::graphics::common::ChromaSiting::COSITED_HORIZONTAL,
+  aidl::android::hardware::graphics::common::ChromaSiting::COSITED_VERTICAL,
+  aidl::android::hardware::graphics::common::ChromaSiting::COSITED_BOTH,
 };
 #pragma clang diagnostic pop
 }  // namespace internal
