@@ -32,9 +32,9 @@
 #include "pvr_robustness.h"
 #include "pvr_tex_state.h"
 
-#define PVR_GLOBAL_FREE_LIST_INITIAL_SIZE (2U * 1024U * 1024U)
+#define PVR_GLOBAL_FREE_LIST_INITIAL_SIZE (16U * 1024U * 1024U)
 #define PVR_GLOBAL_FREE_LIST_MAX_SIZE (256U * 1024U * 1024U)
-#define PVR_GLOBAL_FREE_LIST_GROW_SIZE (1U * 1024U * 1024U)
+#define PVR_GLOBAL_FREE_LIST_GROW_SIZE (4U * 1024U * 1024U)
 
 /* After PVR_SECONDARY_DEVICE_THRESHOLD devices per instance are created,
  * devices will have a smaller global free list size, as usually this use-case
@@ -46,8 +46,16 @@
 
 /* The grow threshold is a percentage. This is intended to be 12.5%, but has
  * been rounded up since the percentage is treated as an integer.
+ *
+ * Raised from 13 to 25: on this platform (single-core PowerVR Rogue, RISC-V
+ * host), the FW's "ready pages" safety margin computed from this percentage
+ * (see calculate_free_list_ready_pages_locked() in the kernel driver) was
+ * observed to be too small (256KiB-1MiB) to absorb UI-compositing demand
+ * bursts before an async grow round-trip completes, causing genuine
+ * PM_OUT_OF_MEMORY -> MMU page fault -> HWR -> freelist reconstruction
+ * cycles (visible as host-side "Guilty/Innocent lockup" context resets).
  */
-#define PVR_GLOBAL_FREE_LIST_GROW_THRESHOLD 13U
+#define PVR_GLOBAL_FREE_LIST_GROW_THRESHOLD 25U
 
 /* Default size in bytes used by pvr_CreateDevice() for setting up the
  * suballoc_general, suballoc_pds and suballoc_usc suballocators.
