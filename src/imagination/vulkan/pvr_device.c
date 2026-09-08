@@ -1060,7 +1060,11 @@ void pvr_GetDeviceImageMemoryRequirements(
    struct pvr_image image = { 0 };
 
    vk_image_init(&device->vk, &image.vk, pInfo->pCreateInfo);
-   pvr_image_init(device, pInfo->pCreateInfo, &image);
+   /* This entry point returns void per the Vulkan spec; there's no way to
+    * report a modifier/layout validation failure here, so the result is
+    * intentionally discarded.
+    */
+   (void)pvr_image_init(device, pInfo->pCreateInfo, &image);
 
    VkImageMemoryRequirementsInfo2 image_info = {
       .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_REQUIREMENTS_INFO_2,
