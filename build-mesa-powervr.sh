@@ -14,13 +14,16 @@ BUILD_ANDROID="build-riscv64-linux-android"
 SPIRV_HOST_PREFIX="$SCRIPT_DIR/spirv-tools-host"
 MESA_COMPILER_PREFIX="/tmp/mesa-compiler"
 SKIP_NATIVE=0
+BOARD="k1"
 
 usage() {
     cat <<EOF
-Usage: $(basename "$0") [--aosp=<path>] [--skip-native]
+Usage: $(basename "$0") [--aosp=<path>] [--board=<k1|a210>] [--skip-native]
 
   --aosp=<path>  AOSP tree to build against and deploy into.
                  Default: $(dirname "$SCRIPT_DIR")/aosp
+  --board=<b>    Target board: k1 (SpaceMit K1/X60, default) or a210
+                 (Zhihe A210 EVB, Imagination PowerVR Rogue).
   --skip-native  Reuse the native tools already installed in
                  $MESA_COMPILER_PREFIX instead of rebuilding them.
   -h, --help     Affiche cette aide.
@@ -30,6 +33,7 @@ EOF
 for arg in "$@"; do
     case "$arg" in
         --aosp=*) AOSP_DIR="${arg#*=}" ;;
+        --board=*) BOARD="${arg#*=}" ;;
         --skip-native) SKIP_NATIVE=1 ;;
         -h|--help) usage; exit 0 ;;
         *) echo -e "${RED}ERREUR: option inconnue: $arg${NC}" >&2; usage >&2; exit 1 ;;
@@ -41,9 +45,25 @@ done
 # against one tree and installed into another.
 [ -d "$AOSP_DIR" ] || { echo -e "${RED}ERREUR: arbre AOSP introuvable: $AOSP_DIR${NC}" >&2; exit 1; }
 AOSP_DIR="$(cd "$AOSP_DIR" && pwd)"
-DEVICE_MESA="$AOSP_DIR/device/spacemit/k1/mesa/lib64"
 
-echo -e "${GREEN}=== Build Mesa PowerVR pour Android riscv64 ===${NC}"
+case "$BOARD" in
+    k1)
+        CROSS_FILE="$SCRIPT_DIR/android-riscv64"
+        DEVICE_MESA="$AOSP_DIR/device/spacemit/k1/mesa/lib64"
+        LUNCH_TARGET="aosp_bananapi_f3-trunk_staging-userdebug"
+        ;;
+    a210)
+        CROSS_FILE="$SCRIPT_DIR/android-riscv64-a210"
+        DEVICE_MESA="$AOSP_DIR/device/alibaba/a210/mesa/lib64"
+        LUNCH_TARGET="aosp_a210_evb-trunk_staging-userdebug"
+        ;;
+    *)
+        echo -e "${RED}ERREUR: board inconnu: $BOARD (attendu: k1, a210)${NC}" >&2
+        exit 1
+        ;;
+esac
+
+echo -e "${GREEN}=== Build Mesa PowerVR pour Android riscv64 ($BOARD) ===${NC}"
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -293,8 +313,25 @@ echo -e "${GREEN}=== Étape 2/3: Cross-compilation pour Android riscv64 ===${NC}
 cd "$MESA_DIR"
 rm -rf "$BUILD_ANDROID"
 
+if [ "$BOARD" = "a210" ]; then
+    # Sandbox pkg-config away from the HOST's native x86_64 packages
+    # entirely (empty PKG_CONFIG_LIBDIR, not unset — unset lets pkg-config
+    # fall back to its compiled-in system search path, which is how a
+    # plain rerun picked up the host's own libglvnd.pc for this riscv64
+    # cross build and pulled in glvnd EGL dispatch code that needs headers
+    # we don't have: "fatal error: 'glvnd/libeglabi.h' file not found").
+    # cutils/hardware/log/sync/nativewindow/libdrm/
+    # android.hardware.graphics.mapper/math/android-hwvulkan-headers/
+    # cpp_stdlib all come from the subprojects/vndk wrap Mesa already ships
+    # (subprojects/vndk.wrap's [provide] section) once pkg-config reports
+    # them not found; zlib/expat fall back to their own vendored wraps the
+    # same way.
+    export PKG_CONFIG_LIBDIR=
+    unset PKG_CONFIG_PATH
+fi
+
 meson setup "$BUILD_ANDROID" \
-  --cross-file "$SCRIPT_DIR/android-riscv64" \
+  --cross-file "$CROSS_FILE" \
   --prefix=/usr/local \
   -Dplatforms=android \
   -Dandroid-stub=false \
@@ -341,15 +378,19 @@ deploy() {
 deploy "$B/src/imagination/vulkan/libvulkan_powervr_mesa.so" \
        "$DEVICE_MESA/hw/vulkan.mesa.so"
 
-# Gallium DRI (copié 4 fois — même binaire)
+# Gallium DRI (copié — même binaire)
 deploy "$B/src/gallium/targets/dri/libgallium_dri.so" \
        "$DEVICE_MESA/egl/libgallium_dri.so"
 deploy "$B/src/gallium/targets/dri/libgallium_dri.so" \
        "$DEVICE_MESA/dri/zink_dri.so"
 deploy "$B/src/gallium/targets/dri/libgallium_dri.so" \
        "$DEVICE_MESA/dri/powervr_dri.so"
-deploy "$B/src/gallium/targets/dri/libgallium_dri.so" \
-       "$DEVICE_MESA/dri/spacemit_dri.so"
+# a210's Android.bp only references egl/libgallium_dri.so, dri/zink_dri.so
+# and dri/powervr_dri.so — no spacemit_dri module on that device.
+if [ "$BOARD" = "k1" ]; then
+    deploy "$B/src/gallium/targets/dri/libgallium_dri.so" \
+           "$DEVICE_MESA/dri/spacemit_dri.so"
+fi
 
 # GBM
 deploy "$B/src/gbm/backends/dri/dri_gbm.so"  "$DEVICE_MESA/gbm/dri_gbm.so"
@@ -380,4 +421,4 @@ echo ""
 echo -e "${GREEN}=== Build + deploy terminé ! ===${NC}"
 echo ""
 echo -e "Pour rebuilder l'AOSP avec les nouvelles libs :"
-echo -e "  ${YELLOW}cd $AOSP_DIR && source build/envsetup.sh && lunch aosp_bananapi_f3-trunk_staging-userdebug && m${NC}"
+echo -e "  ${YELLOW}cd $AOSP_DIR && source build/envsetup.sh && lunch $LUNCH_TARGET && m${NC}"
