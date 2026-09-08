@@ -277,7 +277,11 @@ VkResult pvr_CreateImage(VkDevice _device,
    if (!image)
       return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
 
-   pvr_image_init(device, pCreateInfo, image);
+   VkResult result = pvr_image_init(device, pCreateInfo, image);
+   if (result != VK_SUCCESS) {
+      vk_image_destroy(&device->vk, pAllocator, &image->vk);
+      return result;
+   }
 
    *pImage = pvr_image_to_handle(image);
 
@@ -298,9 +302,9 @@ void pvr_DestroyImage(VkDevice _device,
    vk_image_destroy(&device->vk, pAllocator, &image->vk);
 }
 
-void pvr_image_init(struct pvr_device *device,
-                    const VkImageCreateInfo *pCreateInfo,
-                    struct pvr_image *image)
+VkResult pvr_image_init(struct pvr_device *device,
+                        const VkImageCreateInfo *pCreateInfo,
+                        struct pvr_image *image)
 {
    unsigned pbe_stride_align = get_pbe_stride_align(&device->pdevice->dev_info);
 
@@ -312,7 +316,7 @@ void pvr_image_init(struct pvr_device *device,
                                        pbe_stride_align,
                                        &image->vk.drm_format_mod);
       if (res != VK_SUCCESS)
-         assert(res == VK_SUCCESS);
+         return vk_error(device, res);
 
       assert(image->vk.drm_format_mod == DRM_FORMAT_MOD_LINEAR);
    }
@@ -320,6 +324,8 @@ void pvr_image_init(struct pvr_device *device,
    pvr_image_init_memlayout(image);
    pvr_image_init_physical_extent(image, pCreateInfo, pbe_stride_align);
    pvr_image_setup_mip_levels(image);
+
+   return VK_SUCCESS;
 }
 
 void pvr_image_fini(struct pvr_device *device, struct pvr_image *image)
@@ -449,7 +455,11 @@ void pvr_GetDeviceImageSubresourceLayout(
    struct pvr_image image = { 0 };
 
    vk_image_init(&device->vk, &image.vk, pInfo->pCreateInfo);
-   pvr_image_init(device, pInfo->pCreateInfo, &image);
+   /* This entry point returns void per the Vulkan spec; there's no way to
+    * report a modifier/layout validation failure here, so the result is
+    * intentionally discarded.
+    */
+   (void)pvr_image_init(device, pInfo->pCreateInfo, &image);
 
    pvr_GetImageSubresourceLayout2(_device,
                                   pvr_image_to_handle(&image),
