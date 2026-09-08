@@ -1,0 +1,102 @@
+[constants]
+aosp = '/media/vsatoes/ssd/riscv/aosp-17'
+toolchain = aosp / 'prebuilts/clang/host/linux-x86/clang-r584948b/bin'
+sysroot = aosp / 'out/soong/ndk/sysroot'
+# clang's implicit crtbegin*.o/crtend*.o + -lc/-ldl search (computed from the
+# API level baked into the triple) doesn't resolve against this sysroot's
+# unversioned "current" lib dir on its own (verified by hand: link fails with
+# "cannot open crtbegin_so.o" / "unable to find library -lc" without this).
+# -B/-L fixes it for shared libraries (crtbegin_so.o/crtend_so.o are there),
+# but that "current" dir is an NDK-app stub sysroot missing the executable
+# crt objects (crtbegin_dynamic.o/crtend_android.o/crtbrand.o) meson's own
+# sanity checks (cc.links()) need since those build plain executables —
+# confirmed via meson-log.txt: "cannot open crtbegin_dynamic.o". android-crt-a210/
+# supplements it with symlinks to the real android_vendor_riscv64 crt objects
+# Soong already built in this tree (out/soong/.intermediates/bionic/libc/*).
+ndklib = sysroot / 'usr/lib/riscv64-linux-android/current'
+crtdir = '/media/vsatoes/ssd/riscv/mesa/android-crt-a210'
+# ndklib has no libc++.so (only a dummy libstdc++.so), so any C++ link
+# (including meson's own internal sanity/find_library checks, which clang++
+# auto-adds -lc++ to) fails with "unable to find library -lc++" without
+# this. Use the real vendor libc++.so already built in this tree.
+vendorlib64 = aosp / 'out/target/product/a210/vendor/lib64'
+
+triple = 'riscv64-linux-android'
+# A numeric API level is required, not optional: without it clang doesn't
+# fully activate its Android target detection, so libc++ doesn't take its
+# Android-specific header branches — confirmed by hand ("no member named
+# 'mblen'"/'wctrans'/'towctrans' in cstdlib/cwctype, and open_memstream
+# undeclared, all from external/libcxx/include assuming a generic POSIX libc
+# instead of bionic once __ANDROID_API__ isn't defined). 35 matches this
+# cross-file's own -Dplatform-sdk-version=35 and the original SpaceMit
+# cross-file's android_api_level.
+android_api_level = '35'
+target = triple + android_api_level
+
+# Zhihe A210 EVB baseline.
+#
+# NOTE: this deliberately drops "_zvbb" from the AOSP-wide riscv64 default
+# (build/soong/cc/config/riscv64_device.go's riscv64Cflags is
+# "-march=rv64gcv_zba_zbb_zbs_zvbb", which is what device/alibaba/a210/
+# BoardConfig.mk's empty TARGET_ARCH_VARIANT used to resolve to for every
+# Soong-built riscv64 binary on this device). That default itself is wrong
+# for this hart: /sys/firmware/devicetree/base/cpus/cpu@0/riscv,isa-extensions
+# lists no zvbb (nor zicond, zfh, etc — just i,m,a,f,d,c,v,zicntr,zicsr,
+# zifencei,zihpm,zba,zbb,zbc,zbs,svpbmt,sscofpmf). Confirmed by hand: once
+# the Zicond bug below was fixed, libgallium_dri.so still SIGILLed —
+# tombstone showed `vror.vi` (Zvbb) inside XXH_INLINE_XXH32, auto-vectorized
+# by clang purely because -march legally allowed it. This was a latent,
+# platform-wide risk (any Soong-built riscv64 binary could hit it, not just
+# Mesa) — now fixed at the source in build/soong/cc/config/
+# riscv64_device.go / BoardConfig.mk (TARGET_ARCH_VARIANT := a210), which
+# carries the exact same confirmed extension set as below. Kept in sync by
+# hand since Mesa's build is a separate out-of-tree Meson cross-compile
+# that Soong's TARGET_ARCH_VARIANT has no way to reach.
+#
+# Do NOT reuse the SpaceMit K1/X60 cross-file's
+# `-march=..._zicond_zfh_zvfh_zicboz_zicbop_zbc_zkt` either: the A210 hart
+# has none of those extensions. Building with them is what produced the
+# original vulkan.mesa.so, which SIGILLs on `czero.eqz` (Zicond) the moment
+# surfaceflinger calls into it (vk_enumerate_instance_extension_properties).
+#
+# Full extension list (was just rv64gcv_zba_zbb_zbs, missing zbc among
+# others) confirmed directly on hardware: a SIGILL-catching probe pinned to
+# each of the 8 cores individually (both the C908 and C920 clusters) showed
+# every extension below runs cleanly on both, and only Zvbb faults —
+# identically everywhere. Matches build/soong/cc/config/riscv64_device.go's
+# "a210" variant exactly; if that ever changes, change this the same way.
+riscv64_a210_arch = ['-march=rv64imafdcv_zicntr_zicsr_zifencei_zihpm_zaamo_zalrsc_zca_zcd_zba_zbb_zbc_zbs_zve32f_zve32x_zve64d_zve64f_zve64x_sscofpmf_svpbmt']
+
+# Vendor-only Android headers not exposed via the public NDK sysroot (cutils,
+# hardware, nativewindow's non-public bits, vulkan/hwvulkan, math,
+# nativebase) — pulled straight from the aosp-17 source tree itself instead
+# of the missing /srv/spacemit/.../vndk/riscv64/include snapshot.
+vendor_includes = ['-isystem', aosp / 'external/libdrm', '-isystem', aosp / 'external/libdrm/include/drm', '-isystem', aosp / 'system/core/libcutils/include', '-isystem', aosp / 'system/core/libcutils/include_outside_system', '-isystem', aosp / 'system/core/libsystem/include', '-isystem', aosp / 'system/core/libsync/include', '-isystem', aosp / 'system/logging/liblog/include', '-isystem', aosp / 'system/logging/liblog/include_vndk', '-isystem', aosp / 'hardware/libhardware/include', '-isystem', aosp / 'frameworks/native/libs/nativewindow/include', '-isystem', aosp / 'frameworks/native/libs/nativebase/include', '-isystem', aosp / 'frameworks/native/vulkan/include', '-isystem', aosp / 'frameworks/native/libs/math/include']
+
+[properties]
+sys_root = sysroot
+
+[built-in options]
+c_args = ['--target=' + target, '--sysroot=' + sysroot] + riscv64_a210_arch + vendor_includes
+# The riscv64-linux-android target has no bundled libc++ headers of its own
+# (only __config_site under android_libc++/platform/riscv64) — the real
+# headers (<array>, <vector>, ...) live in the AOSP source tree itself and
+# get passed explicitly by Soong for every platform C++ compile. Without
+# this, any .cpp file fails with "fatal error: 'array' file not found".
+cpp_args = ['--target=' + target, '--sysroot=' + sysroot, '-isystem', aosp / 'external/libcxx/include'] + riscv64_a210_arch + vendor_includes
+c_link_args = ['--target=' + target, '--sysroot=' + sysroot, '-B' + ndklib, '-L' + ndklib, '-B' + crtdir, '-L' + vendorlib64] + riscv64_a210_arch
+cpp_link_args = ['--target=' + target, '--sysroot=' + sysroot, '-B' + ndklib, '-L' + ndklib, '-B' + crtdir, '-L' + vendorlib64] + riscv64_a210_arch
+
+[binaries]
+c = toolchain / 'clang'
+cpp = toolchain / 'clang++'
+ar = toolchain / 'llvm-ar'
+strip = toolchain / 'llvm-strip'
+config = toolchain / 'llvm-config'
+pkg-config = 'pkg-config'
+
+[host_machine]
+system = 'linux'
+cpu_family = 'riscv64'
+cpu = 'riscv64'
+endian = 'little'
