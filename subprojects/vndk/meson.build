@@ -20,11 +20,11 @@ else
     error('Architecture:  ' + cpu_family + ' not supported')
 endif
 
-prebuild_libraries = [
+prebuild_libraries = meson.get_external_property('vndk_lib_dirs', [
     meson.current_source_dir() / prebuilt_path / 'llndk-stub',
     meson.current_source_dir() / prebuilt_path / 'vndk-sp',
     meson.current_source_dir() / prebuilt_path / 'vndk-core',
-]
+])
 
 include_base = cpu / 'include'
 
