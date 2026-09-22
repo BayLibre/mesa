@@ -385,11 +385,13 @@ deploy "$B/src/gallium/targets/dri/libgallium_dri.so" \
        "$DEVICE_MESA/dri/zink_dri.so"
 deploy "$B/src/gallium/targets/dri/libgallium_dri.so" \
        "$DEVICE_MESA/dri/powervr_dri.so"
-# a210's Android.bp only references egl/libgallium_dri.so, dri/zink_dri.so
-# and dri/powervr_dri.so — no spacemit_dri module on that device.
 if [ "$BOARD" = "k1" ]; then
     deploy "$B/src/gallium/targets/dri/libgallium_dri.so" \
            "$DEVICE_MESA/dri/spacemit_dri.so"
+fi
+if [ "$BOARD" = "a210" ]; then
+    deploy "$B/src/gallium/targets/dri/libgallium_dri.so" \
+           "$DEVICE_MESA/dri/verisilicon_dri.so"
 fi
 
 # GBM
