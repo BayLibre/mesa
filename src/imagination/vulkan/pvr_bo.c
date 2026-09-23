@@ -505,7 +505,8 @@ VkResult pvr_bo_alloc(struct pvr_device *device,
       pvr_bo = pvr_bo_cache_get(device, heap, size, alignment, flags);
       if (pvr_bo) {
          pvr_bo->ref_count = 1;
-         memset(pvr_bo->bo->map, 0, pvr_bo->bo->size);
+         if (!(flags & PVR_BO_ALLOC_FLAG_NO_ZERO))
+            memset(pvr_bo->bo->map, 0, pvr_bo->bo->size);
 
          pvr_bo_store_insert(device->bo_store, pvr_bo);
          *pvr_bo_out = pvr_bo;
@@ -777,12 +778,16 @@ VkResult pvr_bo_suballoc(struct pvr_suballocator *allocator,
       allocator->bo_cached = NULL;
    }
 
+   /* Sub-allocations are zeroed on request above, and bo_cached is already
+    * reused as is, so a recycled buffer does not need clearing either.
+    */
    if (!allocator->bo) {
       result = pvr_bo_alloc(allocator->device,
                             allocator->heap,
                             alloc_size,
                             align,
-                            PVR_BO_ALLOC_FLAG_CPU_MAPPED,
+                            PVR_BO_ALLOC_FLAG_CPU_MAPPED |
+                               PVR_BO_ALLOC_FLAG_NO_ZERO,
                             &allocator->bo);
       if (result != VK_SUCCESS) {
          vk_free(&allocator->device->vk.alloc, suballoc_bo);
