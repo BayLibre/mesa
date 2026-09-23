@@ -6492,19 +6492,19 @@ pvr_update_draw_state(struct pvr_cmd_buffer_state *const state,
 {
    /* We don't have a state to tell us that base_instance is being used so it
     * gets used as a boolean - 0 means we'll use a pds program that skips the
-    * base instance addition. If the base_instance gets used (and the last
-    * draw's base_instance was 0) then we switch to the BASE_INSTANCE attrib
-    * program.
+    * base instance addition, anything else the BASE_INSTANCE attrib program.
+    * The data section is laid out for one program or the other, so switching
+    * between them in either direction needs both to be emitted again.
     *
-    * If base_instance changes then we only need to update the data section.
+    * If base_instance changes otherwise then we only need to update the data
+    * section.
     *
     * The only draw call state that doesn't really matter is the start vertex
     * as that is handled properly in the VDM state in all cases.
     */
    if ((state->draw_state.draw_indexed != draw_state->draw_indexed) ||
        (state->draw_state.draw_indirect != draw_state->draw_indirect) ||
-       (state->draw_state.base_instance == 0 &&
-        draw_state->base_instance != 0)) {
+       (!state->draw_state.base_instance != !draw_state->base_instance)) {
       state->dirty.draw_variant = true;
    } else if (state->draw_state.base_instance != draw_state->base_instance) {
       state->dirty.draw_base_instance = true;
