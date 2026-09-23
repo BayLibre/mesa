@@ -297,6 +297,14 @@ VkResult pvr_AllocateMemory(VkDevice _device,
             VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
          ahb_fd_import.fd = ahb_fd;
          fd_info = &ahb_fd_import;
+
+         const VkMemoryDedicatedAllocateInfo *dedicated_info =
+            vk_find_struct_const(pAllocateInfo->pNext,
+                                 MEMORY_DEDICATED_ALLOCATE_INFO);
+         if (dedicated_info && dedicated_info->image != VK_NULL_HANDLE) {
+            VK_FROM_HANDLE(pvr_image, image, dedicated_info->image);
+            pvr_image_apply_ahb_layout(image, ahb_info->buffer);
+         }
          break;
       }
 #endif

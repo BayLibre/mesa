@@ -50,6 +50,8 @@
 #include "pvr_android.h"
 #include "vk_android.h"
 #include "vulkan/vk_android_native_buffer.h"
+
+#include <vndk/hardware_buffer.h>
 #endif
 
 static void pvr_image_init_memlayout(struct pvr_image *image)
@@ -566,3 +568,21 @@ static unsigned get_pbe_stride_align(const struct pvr_device_info *dev_info)
              ? 1
              : ROGUE_PBESTATE_REG_WORD0_LINESTRIDE_UNIT_SIZE;
 }
+
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
+void pvr_image_apply_ahb_layout(struct pvr_image *image,
+                                struct AHardwareBuffer *ahb)
+{
+   AHardwareBuffer_Desc desc;
+
+   if (image->plane_count != 1 || image->memlayout != PVR_MEMLAYOUT_LINEAR)
+      return;
+
+   AHardwareBuffer_describe(ahb, &desc);
+   if (desc.stride == image->planes[0].physical_extent.width)
+      return;
+
+   image->planes[0].physical_extent.width = desc.stride;
+   pvr_image_setup_mip_levels(image);
+}
+#endif
