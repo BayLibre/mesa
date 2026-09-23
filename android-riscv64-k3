@@ -27,6 +27,8 @@ pkg_config_libdir = []
 vndk_lib_dirs = [vendorlib64, systemlib64, product / 'apex/com.android.runtime/lib64/bionic']
 
 [built-in options]
+buildtype = 'release'
+b_ndebug = 'true'
 c_args = ['--target=' + target, '--sysroot=' + sysroot] + riscv64_k3_arch + vendor_includes
 cpp_args = ['--target=' + target, '--sysroot=' + sysroot, '-isystem', aosp / 'external/libcxx/include'] + riscv64_k3_arch + vendor_includes
 c_link_args = ['--target=' + target, '--sysroot=' + sysroot, '-B' + ndklib, '-L' + vendorlib64, '-L' + systemlib64, '-L' + ndklib, '-B' + crtbegin, '-B' + crtend, '-B' + crtbrand] + riscv64_k3_arch
