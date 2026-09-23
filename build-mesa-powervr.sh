@@ -18,12 +18,12 @@ BOARD="k1"
 
 usage() {
     cat <<EOF
-Usage: $(basename "$0") [--aosp=<path>] [--board=<k1|a210>] [--skip-native]
+Usage: $(basename "$0") [--aosp=<path>] [--board=<k1|k3|a210>] [--skip-native]
 
   --aosp=<path>  AOSP tree to build against and deploy into.
                  Default: $(dirname "$SCRIPT_DIR")/aosp
-  --board=<b>    Target board: k1 (SpaceMit K1/X60, default) or a210
-                 (Zhihe A210 EVB, Imagination PowerVR Rogue).
+  --board=<b>    Target board: k1 (SpaceMit K1/X60, default), k3
+                 (SpaceMit K3/X100), or a210 (Zhihe A210 EVB).
   --skip-native  Reuse the native tools already installed in
                  $MESA_COMPILER_PREFIX instead of rebuilding them.
   -h, --help     Affiche cette aide.
@@ -52,13 +52,19 @@ case "$BOARD" in
         DEVICE_MESA="$AOSP_DIR/device/spacemit/k1/mesa/lib64"
         LUNCH_TARGET="aosp_bananapi_f3-trunk_staging-userdebug"
         ;;
+    k3)
+        CROSS_FILE="$SCRIPT_DIR/android-riscv64-k3"
+        BUILD_ANDROID="build-riscv64-linux-android-k3"
+        DEVICE_MESA="$AOSP_DIR/device/spacemit/k1/mesa/lib64"
+        LUNCH_TARGET="aosp_k3_pico_itx-trunk_staging-userdebug"
+        ;;
     a210)
         CROSS_FILE="$SCRIPT_DIR/android-riscv64-a210"
         DEVICE_MESA="$AOSP_DIR/device/alibaba/a210/mesa/lib64"
         LUNCH_TARGET="aosp_a210_evb-trunk_staging-userdebug"
         ;;
     *)
-        echo -e "${RED}ERREUR: board inconnu: $BOARD (attendu: k1, a210)${NC}" >&2
+        echo -e "${RED}ERREUR: board inconnu: $BOARD (attendu: k1, k3, a210)${NC}" >&2
         exit 1
         ;;
 esac
@@ -313,7 +319,14 @@ echo -e "${GREEN}=== Étape 2/3: Cross-compilation pour Android riscv64 ===${NC}
 cd "$MESA_DIR"
 rm -rf "$BUILD_ANDROID"
 
-if [ "$BOARD" = "a210" ]; then
+CROSS_FILES=(--cross-file "$CROSS_FILE")
+if [ "$BOARD" = "k3" ]; then
+    mkdir -p "$BUILD_ANDROID"
+    printf "[constants]\naosp = '%s'\n" "$AOSP_DIR" > "$BUILD_ANDROID/aosp.ini"
+    CROSS_FILES+=(--cross-file "$BUILD_ANDROID/aosp.ini")
+fi
+
+if [ "$BOARD" = "a210" ] || [ "$BOARD" = "k3" ]; then
     # Sandbox pkg-config away from the HOST's native x86_64 packages
     # entirely (empty PKG_CONFIG_LIBDIR, not unset — unset lets pkg-config
     # fall back to its compiled-in system search path, which is how a
@@ -331,7 +344,7 @@ if [ "$BOARD" = "a210" ]; then
 fi
 
 meson setup "$BUILD_ANDROID" \
-  --cross-file "$CROSS_FILE" \
+  "${CROSS_FILES[@]}" \
   --prefix=/usr/local \
   -Dplatforms=android \
   -Dandroid-stub=false \
@@ -385,7 +398,7 @@ deploy "$B/src/gallium/targets/dri/libgallium_dri.so" \
        "$DEVICE_MESA/dri/zink_dri.so"
 deploy "$B/src/gallium/targets/dri/libgallium_dri.so" \
        "$DEVICE_MESA/dri/powervr_dri.so"
-if [ "$BOARD" = "k1" ]; then
+if [ "$BOARD" = "k1" ] || [ "$BOARD" = "k3" ]; then
     deploy "$B/src/gallium/targets/dri/libgallium_dri.so" \
            "$DEVICE_MESA/dri/spacemit_dri.so"
 fi

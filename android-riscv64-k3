@@ -1,0 +1,47 @@
+[constants]
+aosp = '@DIRNAME@' / '..' / 'aosp'
+toolchain = aosp / 'prebuilts/clang/host/linux-x86/clang-r584948b/bin'
+sysroot = aosp / 'out/soong/ndk/sysroot'
+ndklib = sysroot / 'usr/lib/riscv64-linux-android/current'
+bionic = aosp / 'out/soong/.intermediates/bionic/libc'
+crtbegin = bionic / 'crtbegin_dynamic/android_riscv64_x100'
+crtend = bionic / 'crtend_android/android_riscv64_x100'
+crtbrand = bionic / 'crtbrand/android_riscv64_x100'
+
+product = aosp / 'out/target/product/k3'
+vendorlib64 = product / 'vendor/lib64'
+systemlib64 = product / 'system/lib64'
+
+triple = 'riscv64-linux-android'
+android_api_level = '35'
+target = triple + android_api_level
+
+riscv64_k3_arch = ['-march=rv64imafdc_b_v_za64rs_zawrs_zba_zbb_zbc_zbs_zca_zcb_zcd_zcmop_zfa_zfbfmin_zfh_zfhmin_zicbom_zicbop_zicboz_ziccamoa_ziccif_zicclsm_ziccrse_zicntr_zicond_zicsr_zifencei_zihintntl_zihintpause_zihpm_zimop_zkt_zvbb_zvbc_zvfbfmin_zvfbfwma_zvfh_zvfhmin_zvkb_zvkg_zvkn_zvknc_zvkned_zvkng_zvknha_zvknhb_zvks_zvksc_zvksed_zvksg_zvksh_zvkt', '-mabi=lp64d', '-mtune=generic-ooo', '-mimplicit-float']
+
+vendor_includes = ['-isystem', aosp / 'external/libdrm', '-isystem', aosp / 'external/libdrm/include/drm', '-isystem', aosp / 'system/core/libcutils/include', '-isystem', aosp / 'system/core/libcutils/include_outside_system', '-isystem', aosp / 'system/core/libsystem/include', '-isystem', aosp / 'system/core/libsync/include', '-isystem', aosp / 'system/logging/liblog/include', '-isystem', aosp / 'system/logging/liblog/include_vndk', '-isystem', aosp / 'hardware/libhardware/include', '-isystem', aosp / 'frameworks/native/libs/nativewindow/include', '-isystem', aosp / 'frameworks/native/libs/nativebase/include', '-isystem', aosp / 'frameworks/native/vulkan/include', '-isystem', aosp / 'frameworks/native/libs/math/include']
+
+[properties]
+sys_root = sysroot
+needs_exe_wrapper = true
+pkg_config_libdir = []
+vndk_lib_dirs = [vendorlib64, systemlib64, product / 'apex/com.android.runtime/lib64/bionic']
+
+[built-in options]
+c_args = ['--target=' + target, '--sysroot=' + sysroot] + riscv64_k3_arch + vendor_includes
+cpp_args = ['--target=' + target, '--sysroot=' + sysroot, '-isystem', aosp / 'external/libcxx/include'] + riscv64_k3_arch + vendor_includes
+c_link_args = ['--target=' + target, '--sysroot=' + sysroot, '-B' + ndklib, '-L' + vendorlib64, '-L' + systemlib64, '-L' + ndklib, '-B' + crtbegin, '-B' + crtend, '-B' + crtbrand] + riscv64_k3_arch
+cpp_link_args = c_link_args
+
+[binaries]
+c = toolchain / 'clang'
+cpp = toolchain / 'clang++'
+ar = toolchain / 'llvm-ar'
+strip = toolchain / 'llvm-strip'
+config = toolchain / 'llvm-config'
+pkg-config = 'pkg-config'
+
+[host_machine]
+system = 'linux'
+cpu_family = 'riscv64'
+cpu = 'riscv64'
+endian = 'little'
