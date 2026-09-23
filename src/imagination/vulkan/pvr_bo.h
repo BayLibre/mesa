@@ -57,6 +57,29 @@ struct pvr_bo {
    struct pvr_winsys_bo *bo;
    struct pvr_winsys_vma *vma;
    uint32_t ref_count;
+
+   /* PVR_BO_ALLOC_FLAG_* the buffer was allocated with, and when it entered
+    * the BO cache. Only meaningful to the cache.
+    */
+   uint64_t alloc_flags;
+   int64_t free_time_ns;
+};
+
+/* Sizes are rounded up to a power of two, from 4 KiB to 8 MiB. */
+#define PVR_BO_CACHE_MIN_BUCKET_SHIFT 12U
+#define PVR_BO_CACHE_MAX_BUCKET_SHIFT 23U
+#define PVR_BO_CACHE_BUCKET_COUNT \
+   (PVR_BO_CACHE_MAX_BUCKET_SHIFT - PVR_BO_CACHE_MIN_BUCKET_SHIFT + 1U)
+
+/* Freed buffers kept alive, still CPU and GPU mapped, so they can be handed
+ * out again without going back to the kernel.
+ */
+struct pvr_bo_cache {
+   simple_mtx_t mtx;
+
+   /* Most recently freed first. */
+   struct list_head buckets[PVR_BO_CACHE_BUCKET_COUNT];
+   uint64_t size;
 };
 
 struct pvr_suballocator {
@@ -126,6 +149,9 @@ VkResult pvr_bo_alloc(struct pvr_device *device,
 VkResult pvr_bo_cpu_map(struct pvr_device *device, struct pvr_bo *bo);
 void pvr_bo_cpu_unmap(struct pvr_device *device, struct pvr_bo *bo);
 void pvr_bo_free(struct pvr_device *device, struct pvr_bo *bo);
+
+void pvr_bo_cache_init(struct pvr_device *device);
+void pvr_bo_cache_finish(struct pvr_device *device);
 
 void pvr_bo_suballocator_init(struct pvr_suballocator *allocator,
                               struct pvr_winsys_heap *heap,

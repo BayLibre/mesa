@@ -47,6 +47,7 @@
 #include "pvr_util.h"
 #include "pvr_winsys.h"
 #include "util/macros.h"
+#include "util/os_time.h"
 #include "util/rb_tree.h"
 #include "util/simple_mtx.h"
 #include "util/u_debug.h"
@@ -321,6 +322,154 @@ static inline void pvr_bo_free_bo(const struct pvr_device *const device,
    vk_free(&device->vk.alloc, ptr);
 }
 
+
+#define PVR_BO_CACHE_MAX_SIZE (64ULL * 1024ULL * 1024ULL)
+#define PVR_BO_CACHE_MAX_AGE_NS (1000LL * 1000LL * 1000LL)
+
+/* Only buffers that stay CPU mapped are cached, so they can be cleared on
+ * reuse and look exactly like a fresh kernel allocation to the caller.
+ */
+static bool pvr_bo_is_cacheable(uint64_t flags, uint64_t size)
+{
+   return (flags & PVR_BO_ALLOC_FLAG_CPU_MAPPED) &&
+          !(flags & PVR_BO_ALLOC_FLAG_PM_FW_PROTECT) &&
+          size <= BITFIELD64_BIT(PVR_BO_CACHE_MAX_BUCKET_SHIFT);
+}
+
+static uint32_t pvr_bo_cache_bucket(uint64_t size)
+{
+   return MAX2(util_logbase2_ceil64(size), PVR_BO_CACHE_MIN_BUCKET_SHIFT) -
+          PVR_BO_CACHE_MIN_BUCKET_SHIFT;
+}
+
+static void pvr_bo_destroy(struct pvr_device *device, struct pvr_bo *pvr_bo)
+{
+#if defined(HAVE_VALGRIND)
+   vk_free(&device->vk.alloc, pvr_bo->bo->vbits);
+#endif /* defined(HAVE_VALGRIND) */
+
+   device->ws->ops->vma_unmap(pvr_bo->vma);
+   device->ws->ops->heap_free(pvr_bo->vma);
+
+   if (pvr_bo->bo->map)
+      device->ws->ops->buffer_unmap(pvr_bo->bo, false);
+
+   device->ws->ops->buffer_destroy(pvr_bo->bo);
+
+   pvr_bo_free_bo(device, pvr_bo);
+}
+
+void pvr_bo_cache_init(struct pvr_device *device)
+{
+   struct pvr_bo_cache *cache = &device->bo_cache;
+
+   simple_mtx_init(&cache->mtx, mtx_plain);
+
+   for (uint32_t i = 0; i < ARRAY_SIZE(cache->buckets); i++)
+      list_inithead(&cache->buckets[i]);
+
+   cache->size = 0;
+}
+
+void pvr_bo_cache_finish(struct pvr_device *device)
+{
+   struct pvr_bo_cache *cache = &device->bo_cache;
+
+   for (uint32_t i = 0; i < ARRAY_SIZE(cache->buckets); i++) {
+      list_for_each_entry_safe (struct pvr_bo,
+                                pvr_bo,
+                                &cache->buckets[i],
+                                link) {
+         list_del(&pvr_bo->link);
+         pvr_bo_destroy(device, pvr_bo);
+      }
+   }
+
+   simple_mtx_destroy(&cache->mtx);
+}
+
+static struct pvr_bo *pvr_bo_cache_get(struct pvr_device *device,
+                                       struct pvr_winsys_heap *heap,
+                                       uint64_t size,
+                                       uint64_t alignment,
+                                       uint64_t flags)
+{
+   struct pvr_bo_cache *cache = &device->bo_cache;
+   const uint64_t align_mask = MAX2(alignment, 1) - 1;
+   struct pvr_bo *found = NULL;
+
+   simple_mtx_lock(&cache->mtx);
+
+   list_for_each_entry (struct pvr_bo,
+                        pvr_bo,
+                        &cache->buckets[pvr_bo_cache_bucket(size)],
+                        link) {
+      if (pvr_bo->vma->heap != heap || pvr_bo->alloc_flags != flags ||
+          pvr_bo->bo->size < size || (pvr_bo->vma->dev_addr.addr & align_mask))
+         continue;
+
+      list_del(&pvr_bo->link);
+      cache->size -= pvr_bo->bo->size;
+      found = pvr_bo;
+      break;
+   }
+
+   simple_mtx_unlock(&cache->mtx);
+
+   return found;
+}
+
+/* Returns false when the buffer was not taken, the caller then destroys it. */
+static bool pvr_bo_cache_put(struct pvr_device *device, struct pvr_bo *pvr_bo)
+{
+   struct pvr_bo_cache *cache = &device->bo_cache;
+   const int64_t now = os_time_get_nano();
+   struct list_head expired;
+   bool cached;
+
+   if (!pvr_bo_is_cacheable(pvr_bo->alloc_flags, pvr_bo->bo->size) ||
+       !pvr_bo->bo->map)
+      return false;
+
+   list_inithead(&expired);
+
+   simple_mtx_lock(&cache->mtx);
+
+   /* Buckets are ordered most recent first, so the stale ones sit at the
+    * tail.
+    */
+   for (uint32_t i = 0; i < ARRAY_SIZE(cache->buckets); i++) {
+      list_for_each_entry_safe_rev (struct pvr_bo,
+                                    old,
+                                    &cache->buckets[i],
+                                    link) {
+         if (now - old->free_time_ns < PVR_BO_CACHE_MAX_AGE_NS)
+            break;
+
+         list_del(&old->link);
+         cache->size -= old->bo->size;
+         list_addtail(&old->link, &expired);
+      }
+   }
+
+   cached = cache->size + pvr_bo->bo->size <= PVR_BO_CACHE_MAX_SIZE;
+   if (cached) {
+      pvr_bo->free_time_ns = now;
+      list_add(&pvr_bo->link,
+               &cache->buckets[pvr_bo_cache_bucket(pvr_bo->bo->size)]);
+      cache->size += pvr_bo->bo->size;
+   }
+
+   simple_mtx_unlock(&cache->mtx);
+
+   list_for_each_entry_safe (struct pvr_bo, old, &expired, link) {
+      list_del(&old->link);
+      pvr_bo_destroy(device, old);
+   }
+
+   return cached;
+}
+
 /**
  * \brief Helper interface to allocate a GPU buffer and map it to both host and
  * device virtual memory. Host mapping is conditional and is controlled by
@@ -348,6 +497,23 @@ VkResult pvr_bo_alloc(struct pvr_device *device,
    struct pvr_bo *pvr_bo;
    VkResult result;
 
+
+   if (pvr_bo_is_cacheable(flags, size)) {
+      size = BITFIELD64_BIT(pvr_bo_cache_bucket(size) +
+                            PVR_BO_CACHE_MIN_BUCKET_SHIFT);
+
+      pvr_bo = pvr_bo_cache_get(device, heap, size, alignment, flags);
+      if (pvr_bo) {
+         pvr_bo->ref_count = 1;
+         memset(pvr_bo->bo->map, 0, pvr_bo->bo->size);
+
+         pvr_bo_store_insert(device->bo_store, pvr_bo);
+         *pvr_bo_out = pvr_bo;
+
+         return VK_SUCCESS;
+      }
+   }
+
    pvr_bo = pvr_bo_alloc_bo(device);
    if (!pvr_bo) {
       result = vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
@@ -355,6 +521,7 @@ VkResult pvr_bo_alloc(struct pvr_device *device,
    }
 
    pvr_bo->ref_count = 1;
+   pvr_bo->alloc_flags = flags;
 
    result = device->ws->ops->buffer_create(device->ws,
                                            size,
@@ -475,21 +642,10 @@ void pvr_bo_free(struct pvr_device *device, struct pvr_bo *pvr_bo)
    if (!p_atomic_dec_zero(&pvr_bo->ref_count))
       return;
 
-#if defined(HAVE_VALGRIND)
-   vk_free(&device->vk.alloc, pvr_bo->bo->vbits);
-#endif /* defined(HAVE_VALGRIND) */
-
    pvr_bo_store_remove(device->bo_store, pvr_bo);
 
-   device->ws->ops->vma_unmap(pvr_bo->vma);
-   device->ws->ops->heap_free(pvr_bo->vma);
-
-   if (pvr_bo->bo->map)
-      device->ws->ops->buffer_unmap(pvr_bo->bo, false);
-
-   device->ws->ops->buffer_destroy(pvr_bo->bo);
-
-   pvr_bo_free_bo(device, pvr_bo);
+   if (!pvr_bo_cache_put(device, pvr_bo))
+      pvr_bo_destroy(device, pvr_bo);
 }
 
 /**
