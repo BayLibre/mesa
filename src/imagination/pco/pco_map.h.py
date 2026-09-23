@@ -50,7 +50,8 @@ ${enum_map.type_to} ${enum_map.name}(${enum_map.type_from} val)
 
       % endfor
       default:
-         UNREACHABLE("");
+         assert(!"invalid enum mapping value");
+         break;
       }
    }
    % else:
@@ -62,7 +63,8 @@ ${enum_map.type_to} ${enum_map.name}(${enum_map.type_from} val)
 
       % endfor
    default:
-      UNREACHABLE("");
+      assert(!"invalid enum mapping value");
+      break;
    }
    % endif
 
