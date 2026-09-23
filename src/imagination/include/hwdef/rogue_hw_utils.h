@@ -292,6 +292,15 @@ rogue_max_compute_shared_registers(const struct pvr_device_info *dev_info)
    return 0U;
 }
 
+/* The ASTC codes share the texformat field with uncompressed formats, and it
+ * is the image state v2 compression mode that tells the TPU which one it is.
+ */
+static inline bool rogue_has_astc_ldr(const struct pvr_device_info *dev_info)
+{
+   return PVR_HAS_FEATURE(dev_info, astc) &&
+          PVR_HAS_FEATURE(dev_info, tpu_image_state_v2);
+}
+
 static inline uint32_t
 rogue_get_max_num_cores(const struct pvr_device_info *dev_info)
 {

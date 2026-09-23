@@ -238,7 +238,9 @@ pvr_get_format(struct pvr_physical_device *pdevice, VkFormat vk_format)
 {
    enum pipe_format format = vk_format_to_pipe_format(vk_format);
    if (format < pdevice->formats.count &&
-       pdevice->formats.formats[format].bind != 0) {
+       pdevice->formats.formats[format].bind != 0 &&
+       (util_format_description(format)->layout != UTIL_FORMAT_LAYOUT_ASTC ||
+        rogue_has_astc_ldr(&pdevice->dev_info))) {
       return &pdevice->formats.formats[format];
    }
 

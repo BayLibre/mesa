@@ -145,6 +145,20 @@ static const struct pvr_tex_format_compressed_table_entry {
    struct pvr_tex_format_compressed_description desc;
    bool present;
 } pvr_tex_format_compressed_table[PVR_TEX_FORMAT_COUNT] = {
+   /*   0 */ FORMAT(ASTC_4X4, ASTC_4x4, U8U8U8U8),
+   /*   1 */ FORMAT(ASTC_5X4, ASTC_5x4, U8U8U8U8),
+   /*   2 */ FORMAT(ASTC_5X5, ASTC_5x5, U8U8U8U8),
+   /*   3 */ FORMAT(ASTC_6X5, ASTC_6x5, U8U8U8U8),
+   /*   4 */ FORMAT(ASTC_6X6, ASTC_6x6, U8U8U8U8),
+   /*   5 */ FORMAT(ASTC_8X5, ASTC_8x5, U8U8U8U8),
+   /*   6 */ FORMAT(ASTC_8X6, ASTC_8x6, U8U8U8U8),
+   /*   7 */ FORMAT(ASTC_8X8, ASTC_8x8, U8U8U8U8),
+   /*   8 */ FORMAT(ASTC_10X5, ASTC_10x5, U8U8U8U8),
+   /*   9 */ FORMAT(ASTC_10X6, ASTC_10x6, U8U8U8U8),
+   /*  10 */ FORMAT(ASTC_10X8, ASTC_10x8, U8U8U8U8),
+   /*  11 */ FORMAT(ASTC_10X10, ASTC_10x10, U8U8U8U8),
+   /*  12 */ FORMAT(ASTC_12X10, ASTC_12x10, U8U8U8U8),
+   /*  13 */ FORMAT(ASTC_12X12, ASTC_12x12, U8U8U8U8),
    /*  68 */ FORMAT(ETC2_RGB, ETC2_RGB8, U8U8U8U8),
    /*  69 */ FORMAT(ETC2A_RGBA, ETC2_RGBA8, U8U8U8U8),
    /*  70 */ FORMAT(ETC2_PUNCHTHROUGHA, ETC2_RGB8A1, U8U8U8U8),
