@@ -1443,7 +1443,7 @@ static VkResult pvr_cmd_copy_buffer_region(struct pvr_cmd_buffer *cmd_buffer,
       const VkDeviceSize remaining_size = size - offset;
       struct pvr_transfer_cmd *transfer_cmd;
       uint32_t src_align = (src_addr.addr + offset + src_offset) & 0xF;
-      uint32_t dst_align = (dst_addr.addr + offset + src_offset) & 0xF;
+      uint32_t dst_align = (dst_addr.addr + offset + dst_offset) & 0xF;
       uint32_t texel_width;
       VkDeviceSize texels;
       VkFormat vk_format;
