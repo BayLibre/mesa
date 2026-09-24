@@ -1229,6 +1229,14 @@ dri2_initialize_android(_EGLDisplay *disp)
    disp->Extensions.ANDROID_image_native_buffer = EGL_TRUE;
    disp->Extensions.ANDROID_recordable = EGL_TRUE;
 
+   /* The Android CTS runs dEQP-EGL.functional.create_context.no_config, which
+    * wants an ES 3 context without a config whenever this extension is
+    * exposed. A screen stuck at ES 2 cannot create one, so leave it out:
+    * SurfaceFlinger and hwui then pick a config instead.
+    */
+   if (!(disp->ClientAPIs & EGL_OPENGL_ES3_BIT_KHR))
+      disp->Extensions.KHR_no_config_context = EGL_FALSE;
+
    /* Querying buffer age requires a buffer to be dequeued.  Without
     * EGL_ANDROID_native_fence_sync, dequeue might call eglClientWaitSync and
     * result in a deadlock (the lock is already held by eglQuerySurface).
