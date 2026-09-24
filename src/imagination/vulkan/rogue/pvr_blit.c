@@ -1459,10 +1459,14 @@ static VkResult pvr_cmd_copy_buffer_region(struct pvr_cmd_buffer *cmd_buffer,
          /* Only if address is 128bpp aligned */
          vk_format = VK_FORMAT_R32G32B32A32_UINT;
          texel_width = 16U;
-      } else if (remaining_size >= 4U) {
+      } else if (remaining_size >= 4U && (src_align % 4U) == 0 &&
+                 (dst_align % 4U) == 0) {
          vk_format = VK_FORMAT_R32_UINT;
          texel_width = 4U;
       } else {
+         /* The transfer code splits the texels of an unaligned 32-bit surface
+          * into bytes, which makes a full-width row overflow maxclip_x.
+          */
          vk_format = VK_FORMAT_R8_UINT;
          texel_width = 1U;
       }
