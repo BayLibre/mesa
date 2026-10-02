@@ -338,7 +338,7 @@ if [ "$BOARD" = "k3" ]; then
     CROSS_FILES+=(--cross-file "$BUILD_ANDROID/aosp.ini")
 fi
 
-if [ "$BOARD" = "a210" ] || [ "$BOARD" = "k3" ]; then
+if [ "$BOARD" = "a210" ] || [ "$BOARD" = "k3" ] || [ "$BUILD_ARM64" -eq 1 ]; then
     # Sandbox pkg-config away from the HOST's native x86_64 packages
     # entirely (empty PKG_CONFIG_LIBDIR, not unset — unset lets pkg-config
     # fall back to its compiled-in system search path, which is how a
