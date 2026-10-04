@@ -60,6 +60,9 @@ struct vec_override {
    unsigned offset;
 };
 
+/* Temps holding spilled values reloaded for one instruction. */
+#define PCO_RA_SPILL_DATA_REGS 4
+
 enum pco_ra_ctx_state {
    PCO_RA_CTX_STATE_OPTIMAL,
    PCO_RA_CTX_STATE_MAXIMUM,
@@ -393,6 +396,57 @@ static void setup_spill_base(pco_shader *shader,
                pco_ref_null());
 }
 
+/* Point a spilled SSA reference at a spill register, keeping its modifiers. */
+static pco_ref spill_ref(pco_ref ref, pco_ref hwreg)
+{
+   ref.val = hwreg.val;
+   ref.type = hwreg.type;
+   ref.reg_class = hwreg.reg_class;
+   return ref;
+}
+
+/* Address of the spill slot in the address temps. The slot offset goes
+ * through the low address temp, so it never clobbers spilled data already
+ * loaded for the same instruction.
+ */
+static void spill_slot_addr(pco_builder *b, pco_ra_ctx *ctx, unsigned offset)
+{
+   pco_movi32(b, ctx->spill_addr_comps[0], pco_ref_imm32(offset));
+   pco_imadd64(b,
+               ctx->spill_addr_comps[0],
+               ctx->spill_addr_comps[1],
+               ctx->spill_addr_comps[0],
+               pco_4,
+               ctx->spill_inst_addr_comps[0],
+               ctx->spill_inst_addr_comps[1],
+               pco_ref_null());
+}
+
+/* A spill data temp no other source of the instruction already uses, so two
+ * spilled sources of one instruction don't share a register.
+ */
+static pco_ref spill_src_reg(pco_instr *instr, pco_ra_ctx *ctx)
+{
+   for (unsigned u = 0; u < PCO_RA_SPILL_DATA_REGS; ++u) {
+      unsigned index = ctx->spill_data.val + u;
+      bool used = false;
+
+      pco_foreach_instr_src (psrc, instr) {
+         if (pco_ref_is_reg(*psrc) && psrc->reg_class == PCO_REG_CLASS_TEMP &&
+             psrc->val <= index &&
+             index < psrc->val + pco_ref_get_chans(*psrc)) {
+            used = true;
+            break;
+         }
+      }
+
+      if (!used)
+         return pco_ref_hwreg(index, PCO_REG_CLASS_TEMP);
+   }
+
+   UNREACHABLE("too many spilled sources in one instruction");
+}
+
 static void spill(unsigned spill_index, pco_func *func, pco_ra_ctx *ctx)
 {
    unsigned spill_offset = ctx->spilled_temps++;
@@ -403,20 +457,8 @@ static void spill(unsigned spill_index, pco_func *func, pco_ra_ctx *ctx)
          if (pdest->val != spill_index)
             continue;
 
-         pco_ref imm_off = pco_ref_imm32(spill_offset);
-         pco_movi32(&b, ctx->spill_data, imm_off);
-         pco_imadd64(&b,
-                     ctx->spill_addr_comps[0],
-                     ctx->spill_addr_comps[1],
-                     ctx->spill_data,
-                     pco_4,
-                     ctx->spill_inst_addr_comps[0],
-                     ctx->spill_inst_addr_comps[1],
-                     pco_ref_null());
-
-         /**/
-
-         *pdest = ctx->spill_data;
+         /* The store data must follow the address temps. */
+         *pdest = spill_ref(*pdest, ctx->spill_data);
 
          pco_instr *next_instr = pco_next_instr(instr);
          if (next_instr && next_instr->op == PCO_OP_WDF)
@@ -424,6 +466,7 @@ static void spill(unsigned spill_index, pco_func *func, pco_ra_ctx *ctx)
          else
             b.cursor = pco_cursor_after_instr(instr);
 
+         spill_slot_addr(&b, ctx, spill_offset);
          pco_st32(&b,
                   ctx->spill_data,
                   pco_ref_drc(PCO_DRC_0),
@@ -438,40 +481,28 @@ static void spill(unsigned spill_index, pco_func *func, pco_ra_ctx *ctx)
       }
 
       b.cursor = pco_cursor_before_instr(instr);
-      bool load_done = false;
+      pco_ref data = pco_ref_null();
       pco_foreach_instr_src_ssa (pdest, instr) {
          if (pdest->val != spill_index)
             continue;
 
-         if (!load_done) {
-            pco_ref imm_off = pco_ref_imm32(spill_offset);
-            pco_movi32(&b, ctx->spill_data, imm_off);
-            pco_imadd64(&b,
-                        ctx->spill_addr_comps[0],
-                        ctx->spill_addr_comps[1],
-                        ctx->spill_data,
-                        pco_4,
-                        ctx->spill_inst_addr_comps[0],
-                        ctx->spill_inst_addr_comps[1],
-                        pco_ref_null());
+         if (pco_ref_is_null(data)) {
+            data = spill_src_reg(instr, ctx);
 
+            spill_slot_addr(&b, ctx, spill_offset);
             pco_ld(&b,
-                   ctx->spill_data,
+                   data,
                    pco_ref_drc(PCO_DRC_0),
                    pco_ref_imm8(1),
                    ctx->spill_addr,
                    .mcu_cache_mode_ld = PCO_MCU_CACHE_MODE_LD_NORMAL);
 
             pco_wdf(&b, pco_ref_drc(PCO_DRC_0));
-
-            load_done = true;
          }
 
-         *pdest = ctx->spill_data;
+         *pdest = spill_ref(*pdest, data);
       }
    }
-
-   pco_index(func->parent_shader, false);
 }
 
 /**
@@ -873,8 +904,8 @@ static bool pco_ra_func(pco_func *func, pco_ra_ctx *ctx)
          ctx->spill_addr = pco_ref_hwreg_vec(2, PCO_REG_CLASS_TEMP, 2);
          ctx->spill_addr_data = pco_ref_hwreg_vec(2, PCO_REG_CLASS_TEMP, 3);
 
-         ctx->allocable_temps -= 5;
-         ctx->temp_alloc_offset = 5;
+         ctx->allocable_temps -= 4 + PCO_RA_SPILL_DATA_REGS;
+         ctx->temp_alloc_offset = 4 + PCO_RA_SPILL_DATA_REGS;
 
          setup_spill_base(func->parent_shader, ctx->spill_inst_addr_comps);
          ctx->state = PCO_RA_CTX_STATE_SPILLING;
@@ -900,6 +931,7 @@ static bool pco_ra_func(pco_func *func, pco_ra_ctx *ctx)
       }
 
       spill(spill_index, func, ctx);
+      pco_index(func->parent_shader, false);
 
       ralloc_free(ra_regs);
       return false;
