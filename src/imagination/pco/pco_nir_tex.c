@@ -1021,6 +1021,9 @@ lower_image(nir_builder *b, nir_intrinsic_instr *intr, void *cb_data)
          ? PVR_HAS_FEATURE(dev_info, tpu_extended_integer_lookup)
          : false;
 
+   nir_def *ia_frag_coords = NULL;
+   nir_def *ia_offset = NULL;
+
     if (data->common.image_sliced_view_of_3d &&
               image_dim == GLSL_SAMPLER_DIM_3D) {
       nir_def *tex_meta = nir_load_tex_meta_pco(b,
@@ -1411,6 +1414,9 @@ lower_image(nir_builder *b, nir_intrinsic_instr *intr, void *cb_data)
                                                .num_slots = 1,
                                             });
 
+      ia_offset = coords;
+      ia_frag_coords = frag_coords;
+
       frag_coords = nir_f2i32(b, frag_coords);
       coords = nir_iadd(b, frag_coords, coords);
 
@@ -1477,6 +1483,13 @@ lower_image(nir_builder *b, nir_intrinsic_instr *intr, void *cb_data)
                                     &int_coords,
                                     &float_array_index,
                                     &int_array_index);
+
+   /* The sampler takes non-normalized float coordinates: sample at the
+    * fragment's pixel center rather than converting it to an integer and
+    * back.
+    */
+   if (ia_frag_coords && !hw_int_support && !is_array)
+      float_coords = nir_fadd(b, ia_frag_coords, nir_i2f32(b, ia_offset));
 
    pco_smp_params params = {
       .tex_state = tex_state,
