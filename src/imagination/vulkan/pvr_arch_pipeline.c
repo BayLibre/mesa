@@ -1363,6 +1363,7 @@ static void pvr_graphics_pipeline_setup_vertex_dma(
    struct pvr_graphics_pipeline *gfx_pipeline,
    const VkPipelineVertexInputStateCreateInfo *const vertex_input_state,
    const struct vk_vertex_input_state *vi,
+   bool robust_buffer_access,
    struct pvr_pds_vertex_dma *const dma_descriptions,
    uint32_t *const dma_count)
 {
@@ -1422,13 +1423,6 @@ static void pvr_graphics_pipeline_setup_vertex_dma(
        * section.
        */
 
-      /* TODO: Right now we're setting up a DMA per attribute. In a case where
-       * there are multiple attributes packed into a single binding with
-       * adjacent locations we'd still be DMAing them separately. This is not
-       * great so the DMA setup should be smarter and could do with some
-       * optimization.
-       */
-
       *dma_desc = (struct pvr_pds_vertex_dma){ 0 };
 
       /* In relation to the Vulkan spec. 22.4. Vertex Input Address Calculation
@@ -1475,6 +1469,26 @@ static void pvr_graphics_pipeline_setup_vertex_dma(
        * accessed out of bounds, for robust buffer access.
        */
       dma_desc->attrib_size_in_bytes = fmt_description->block.bits / 8;
+
+      /* The PDS issues one DMA per entry for every vertex. Fold an attribute
+       * that continues the previous one, both in the binding and in the vtxin
+       * registers, into a single DMA. Robust access checks each attribute
+       * against the buffer size separately, so keep them apart then.
+       */
+      if (!robust_buffer_access && *dma_count > 0) {
+         struct pvr_pds_vertex_dma *prev = &dma_descriptions[*dma_count - 1];
+
+         if (prev->binding_index == dma_desc->binding_index &&
+             prev->flags == dma_desc->flags &&
+             prev->divisor == dma_desc->divisor &&
+             prev->offset + prev->size_in_dwords * 4 == dma_desc->offset &&
+             prev->destination + prev->size_in_dwords ==
+                dma_desc->destination &&
+             prev->size_in_dwords + dma_desc->size_in_dwords <= UINT8_MAX) {
+            prev->size_in_dwords += dma_desc->size_in_dwords;
+            continue;
+         }
+      }
 
       ++*dma_count;
    }
@@ -1771,6 +1785,12 @@ static void pvr_init_vs_attribs(
 
 static void pvr_alloc_vs_attribs(pco_data *data, nir_shader *nir)
 {
+   /* Attributes laid out next to each other in a binding usually have
+    * consecutive locations; keeping their vtxins in the same order lets
+    * pvr_graphics_pipeline_setup_vertex_dma() fetch them with a single DMA.
+    */
+   nir_sort_variables_by_location(nir, nir_var_shader_in);
+
    nir_foreach_shader_in_variable (var, nir) {
       allocate_var(data->vs.attribs, &data->common.vtxins, var, 1);
    }
@@ -3061,6 +3081,7 @@ pvr_graphics_pipeline_compile(struct pvr_device *const device,
    pvr_graphics_pipeline_setup_vertex_dma(gfx_pipeline,
                                           pCreateInfo->pVertexInputState,
                                           state->vi,
+                                          device->vk.enabled_features.robustBufferAccess,
                                           vtx_dma_descriptions,
                                           &vtx_dma_count);
 
