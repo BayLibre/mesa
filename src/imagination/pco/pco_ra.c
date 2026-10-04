@@ -1085,7 +1085,8 @@ static bool pco_ra_func(pco_func *func, pco_ra_ctx *ctx)
                   }
 
                   dest = pco_ref_offset(dest, u);
-                  dest = pco_ref_offset(dest, ctx->temp_alloc_offset);
+                  if (pco_ref_is_temp(dest))
+                     dest = pco_ref_offset(dest, ctx->temp_alloc_offset);
 
                   pco_ref src;
                   if (pco_ref_is_ssa(*psrc) || pco_ref_is_vreg(*psrc)) {
@@ -1101,7 +1102,12 @@ static bool pco_ra_func(pco_func *func, pco_ra_ctx *ctx)
                   }
 
                   src = pco_ref_offset(src, u);
-                  src = pco_ref_offset(src, ctx->temp_alloc_offset);
+
+                  /* Only allocated temps move past the spill registers. */
+                  if ((pco_ref_is_ssa(*psrc) || pco_ref_is_vreg(*psrc)) &&
+                      pco_ref_is_temp(src)) {
+                     src = pco_ref_offset(src, ctx->temp_alloc_offset);
+                  }
 
                   pco_ref_xfer_mods(&src, psrc, false);
 
