@@ -762,46 +762,42 @@ bool pco_opt_comp_only_vecs(pco_shader *shader)
    bool progress = false;
 
    pco_foreach_func_in_shader (func, shader) {
+      void *mem_ctx = ralloc_context(NULL);
+
+      /* Comps reading each SSA value, and whether anything else reads it. */
+      struct util_dynarray *ssa_comps =
+         rzalloc_array(mem_ctx, struct util_dynarray, func->next_ssa);
+      BITSET_WORD *noncomp_used =
+         rzalloc_array(mem_ctx, BITSET_WORD, BITSET_WORDS(func->next_ssa));
+
+      pco_foreach_instr_in_func (instr, func) {
+         if (instr->op == PCO_OP_COMP) {
+            if (instr->src[0].val < func->next_ssa)
+               util_dynarray_append(&ssa_comps[instr->src[0].val], instr);
+
+            continue;
+         }
+
+         pco_foreach_instr_src_ssa (psrc, instr) {
+            BITSET_SET(noncomp_used, psrc->val);
+         }
+      }
+
       pco_foreach_instr_in_func (vec, func) {
          if (vec->op != PCO_OP_VEC)
             continue;
 
-         bool used_by_noncomps = false;
          pco_ref dest = vec->dest[0];
 
-         struct util_dynarray comps = UTIL_DYNARRAY_INIT;
-
-         pco_foreach_instr_in_func_from (instr, vec) {
-            if (instr->op == PCO_OP_COMP) {
-               if (instr->src[0].val == dest.val) {
-                  util_dynarray_append(&comps, instr);
-               }
-
-               continue;
-            }
-
-            pco_foreach_instr_src_ssa (psrc, instr) {
-               if (psrc->val == dest.val) {
-                  used_by_noncomps = true;
-                  break;
-               }
-            }
-
-            if (used_by_noncomps)
-               break;
-         }
-
-         if (used_by_noncomps) {
-            util_dynarray_fini(&comps);
+         if (BITSET_TEST(noncomp_used, dest.val))
             continue;
-         }
+
+         struct util_dynarray comps = ssa_comps[dest.val];
 
          /* Has collated vec, skip. */
          /* TODO: support this. */
-         if (vec->num_srcs != util_dynarray_num_elements(&comps, pco_instr *)) {
-            util_dynarray_fini(&comps);
+         if (vec->num_srcs != util_dynarray_num_elements(&comps, pco_instr *))
             continue;
-         }
 
          util_dynarray_foreach (&comps, pco_instr *, _comp) {
             pco_instr *comp = *_comp;
@@ -818,9 +814,12 @@ bool pco_opt_comp_only_vecs(pco_shader *shader)
             pco_instr_delete(comp);
          }
 
-         util_dynarray_fini(&comps);
          progress = true;
       }
+
+      for (unsigned u = 0; u < func->next_ssa; ++u)
+         util_dynarray_fini(&ssa_comps[u]);
+      ralloc_free(mem_ctx);
    }
 
    return progress;
