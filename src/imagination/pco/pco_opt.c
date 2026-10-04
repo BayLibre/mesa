@@ -707,6 +707,26 @@ bool pco_shrink_vecs(pco_shader *shader)
    bool progress = false;
 
    pco_foreach_func_in_shader (func, shader) {
+      /* Number of channels of each SSA value that are read. */
+      unsigned *chans_read = rzalloc_array(NULL, unsigned, func->next_ssa);
+
+      pco_foreach_instr_in_func (instr, func) {
+         if (instr->op == PCO_OP_COMP) {
+            pco_ref src = instr->src[0];
+            if (pco_ref_is_ssa(src)) {
+               unsigned offset = pco_ref_get_imm(instr->src[1]);
+               chans_read[src.val] = MAX2(chans_read[src.val], offset + 1);
+            }
+
+            continue;
+         }
+
+         pco_foreach_instr_src_ssa (psrc, instr) {
+            chans_read[psrc->val] =
+               MAX2(chans_read[psrc->val], pco_ref_get_chans(*psrc));
+         }
+      }
+
       pco_foreach_instr_in_func (vec, func) {
          if (vec->op != PCO_OP_VEC)
             continue;
@@ -716,31 +736,8 @@ bool pco_shrink_vecs(pco_shader *shader)
             continue;
 
          pco_ref *pdest = &vec->dest[0];
-         unsigned chans_used = 0;
          unsigned chans = pco_ref_get_chans(*pdest);
-         pco_foreach_instr_in_func_from (instr, vec) {
-            if (instr->op == PCO_OP_COMP) {
-               pco_ref src = instr->src[0];
-               if (!pco_ref_is_ssa(src))
-                  continue;
-
-               if (src.val != pdest->val)
-                  continue;
-
-               unsigned offset = pco_ref_get_imm(instr->src[1]);
-               chans_used = MAX2(chans_used, offset);
-
-               continue;
-            }
-
-            pco_foreach_instr_src_ssa (psrc, instr) {
-               if (psrc->val == pdest->val) {
-                  chans_used = MAX2(chans_used, pco_ref_get_chans(*psrc) - 1);
-               }
-            }
-         }
-
-         ++chans_used;
+         unsigned chans_used = MAX2(chans_read[pdest->val], 1);
          assert(chans_used <= chans);
 
          /* Whole vec used, skip. */
@@ -753,6 +750,8 @@ bool pco_shrink_vecs(pco_shader *shader)
 
          progress = true;
       }
+
+      ralloc_free(chans_read);
    }
 
    return progress;
