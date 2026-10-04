@@ -202,6 +202,7 @@ typedef struct _pco_push_const_data {
 } pco_push_const_data;
 
 #define PCO_MAX_UBO_PRELOADS 4U
+#define PCO_MAX_SHARED_IMMS 32U
 
 /** A uniform buffer only read at constant offsets, which the descriptor
  * upload program can copy into shared registers.
@@ -227,6 +228,12 @@ typedef struct _pco_common_data {
 
    pco_ubo_preload ubo_preloads[PCO_MAX_UBO_PRELOADS];
    unsigned ubo_preload_count;
+
+   /** Shared registers holding immediates, loaded by the descriptor upload
+    * program from shared_imm_vals.
+    */
+   pco_range shared_imms;
+   uint32_t shared_imm_vals[PCO_MAX_SHARED_IMMS];
 
    pco_range point_sampler;
    pco_range ia_sampler;

@@ -13,6 +13,7 @@
 #include "pco.h"
 #include "pco_builder.h"
 #include "pco_internal.h"
+#include "util/hash_table.h"
 #include "util/macros.h"
 
 #include <stdbool.h>
@@ -209,6 +210,152 @@ bool pco_const_imms(pco_shader *shader)
          progress = true;
       }
    }
+
+   return progress;
+}
+
+struct shared_imm {
+   uint32_t val;
+   unsigned uses;
+   bool usable;
+};
+
+static int cmp_shared_imm_uses(const void *a, const void *b)
+{
+   const struct shared_imm *ia = a;
+   const struct shared_imm *ib = b;
+
+   return (int)ib->uses - (int)ia->uses;
+}
+
+/**
+ * \brief Moves immediates that have no constant register into shared
+ * registers, loaded once per draw by the descriptor upload program, so that
+ * ALU instructions read them directly instead of each needing a load.
+ *
+ * \param[in,out] shader PCO shader.
+ * \return True if the pass made progress.
+ */
+bool pco_shared_imms(pco_shader *shader)
+{
+   if (shader->stage != MESA_SHADER_FRAGMENT &&
+       shader->stage != MESA_SHADER_VERTEX)
+      return false;
+
+   /* Only pipelines load the immediates buffer into shared registers; the
+    * driver's internal programs never do.
+    */
+   if (shader->is_internal)
+      return false;
+
+   pco_common_data *common = &shader->data.common;
+   struct hash_table_u64 *by_val = _mesa_hash_table_u64_create(NULL);
+   struct hash_table_u64 *def_val = _mesa_hash_table_u64_create(NULL);
+   bool progress = false;
+
+   /* Immediate value of each loaded SSA. */
+   pco_foreach_func_in_shader (func, shader) {
+      pco_foreach_instr_in_func (instr, func) {
+         if (instr->op != PCO_OP_MOVI32 || !pco_ref_is_ssa(instr->dest[0]))
+            continue;
+
+         if (pco_instr_has_exec_cnd(instr) &&
+             pco_instr_get_exec_cnd(instr) != PCO_EXEC_CND_E1_ZX)
+            continue;
+
+         uint32_t val = pco_ref_get_imm(instr->src[0]);
+         struct shared_imm *imm = _mesa_hash_table_u64_search(by_val, val);
+         if (!imm) {
+            imm = rzalloc(by_val, struct shared_imm);
+            imm->val = val;
+            imm->usable = true;
+            _mesa_hash_table_u64_insert(by_val, val, imm);
+         }
+
+         _mesa_hash_table_u64_insert(def_val, instr->dest[0].val, imm);
+      }
+   }
+
+   /* A value is only moved if every use of every load can read it. */
+   pco_foreach_func_in_shader (func, shader) {
+      pco_foreach_instr_in_func (instr, func) {
+         pco_foreach_instr_src_ssa (psrc, instr) {
+            struct shared_imm *imm =
+               _mesa_hash_table_u64_search(def_val, psrc->val);
+            if (!imm)
+               continue;
+
+            if (pco_instr_reads_shared(instr) &&
+                pco_shared_src_fits(instr, psrc - instr->src))
+               ++imm->uses;
+            else
+               imm->usable = false;
+         }
+      }
+   }
+
+   struct shared_imm chosen[PCO_MAX_SHARED_IMMS * 4];
+   unsigned count = 0;
+   hash_table_u64_foreach (by_val, entry) {
+      struct shared_imm *imm = entry.data;
+      if (imm->usable && imm->uses && count < ARRAY_SIZE(chosen))
+         chosen[count++] = *imm;
+   }
+
+   qsort(chosen, count, sizeof(*chosen), cmp_shared_imm_uses);
+   count = MIN2(count, PCO_MAX_SHARED_IMMS);
+
+   if (count) {
+      common->shared_imms = (pco_range){
+         .start = common->shareds,
+         .count = count,
+      };
+      common->shareds += count;
+
+      for (unsigned u = 0; u < count; ++u)
+         common->shared_imm_vals[u] = chosen[u].val;
+
+      pco_foreach_func_in_shader (func, shader) {
+         pco_foreach_instr_in_func_safe (instr, func) {
+            pco_foreach_instr_src_ssa (psrc, instr) {
+               struct shared_imm *imm =
+                  _mesa_hash_table_u64_search(def_val, psrc->val);
+               if (!imm)
+                  continue;
+
+               for (unsigned u = 0; u < count; ++u) {
+                  if (chosen[u].val != imm->val)
+                     continue;
+
+                  pco_ref reg = pco_ref_hwreg(common->shared_imms.start + u,
+                                              PCO_REG_CLASS_SHARED);
+                  pco_ref_xfer_mods(&reg, psrc, true);
+                  *psrc = reg;
+                  progress = true;
+                  break;
+               }
+            }
+         }
+
+         /* The loads of moved values are now unused. */
+         pco_foreach_instr_in_func_safe (instr, func) {
+            if (instr->op != PCO_OP_MOVI32 || !pco_ref_is_ssa(instr->dest[0]))
+               continue;
+
+            struct shared_imm *imm =
+               _mesa_hash_table_u64_search(def_val, instr->dest[0].val);
+            for (unsigned u = 0; imm && u < count; ++u) {
+               if (chosen[u].val == imm->val) {
+                  pco_instr_delete(instr);
+                  break;
+               }
+            }
+         }
+      }
+   }
+
+   _mesa_hash_table_u64_destroy(def_val);
+   _mesa_hash_table_u64_destroy(by_val);
 
    return progress;
 }

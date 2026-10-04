@@ -1855,6 +1855,7 @@ bool pco_ra(pco_shader *shader);
 bool pco_schedule(pco_shader *shader);
 bool pco_reuse_imms(pco_shader *shader);
 bool pco_schedule_alu(pco_shader *shader);
+bool pco_shared_imms(pco_shader *shader);
 bool pco_shrink_vecs(pco_shader *shader);
 
 typedef enum {
@@ -3054,6 +3055,43 @@ ref_src_map_valid(pco_ref ref, enum pco_io mapped_src, bool *needs_s124)
    }
 
    return false;
+}
+
+/**
+ * \brief Whether an instruction reads its sources from shared registers as
+ *        cheaply as from temporaries.
+ */
+static inline bool pco_instr_reads_shared(const pco_instr *instr)
+{
+   switch (instr->op) {
+   case PCO_OP_FADD:
+   case PCO_OP_FMUL:
+   case PCO_OP_FMAD:
+   case PCO_OP_MIN:
+   case PCO_OP_MAX:
+      return true;
+
+   default:
+      return false;
+   }
+}
+
+/**
+ * \brief Whether a shared register can replace a source of an instruction
+ *        that reads shared registers, given the hardware registers its other
+ *        sources already use: only one of the two first sources can be one.
+ */
+static inline bool pco_shared_src_fits(const pco_instr *instr,
+                                       unsigned src_index)
+{
+   if (src_index > 1)
+      return true;
+
+   pco_ref other = instr->src[!src_index];
+   return !pco_ref_is_reg(other) ||
+          (pco_ref_get_reg_class(other) != PCO_REG_CLASS_SHARED &&
+           pco_ref_get_reg_class(other) != PCO_REG_CLASS_COEFF &&
+           pco_ref_get_reg_class(other) != PCO_REG_CLASS_SPEC);
 }
 
 static inline enum pco_srcsel pco_ref_srcsel(pco_ref ref)

@@ -591,6 +591,23 @@ static VkResult pvr_pds_descriptor_program_create_and_upload(
       };
    }
 
+   if (data->common.shared_imms.count > 0) {
+      result = pvr_gpu_upload(device,
+                              device->heaps.general_heap,
+                              data->common.shared_imm_vals,
+                              PVR_DW_TO_BYTES(data->common.shared_imms.count),
+                              sizeof(uint32_t),
+                              &descriptor_state->static_consts);
+      if (result != VK_SUCCESS)
+         goto err_free_entries;
+
+      program.buffers[program.buffer_count++] = (struct pvr_pds_buffer){
+         .type = PVR_BUFFER_TYPE_COMPILE_TIME,
+         .size_in_dwords = data->common.shared_imms.count,
+         .destination = data->common.shared_imms.start,
+      };
+   }
+
    if (data->common.spill_info.count > 0) {
       program.buffers[program.buffer_count++] = (struct pvr_pds_buffer){
          .type = PVR_BUFFER_TYPE_SPILL_INFO,
@@ -659,6 +676,7 @@ static VkResult pvr_pds_descriptor_program_create_and_upload(
 
    if (!staging_buffer_size) {
       vk_free2(&device->vk.alloc, allocator, pds_info->entries);
+      pvr_bo_suballoc_free(descriptor_state->static_consts);
 
       *descriptor_state = (struct pvr_stage_allocation_descriptor_state){ 0 };
 

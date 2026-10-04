@@ -5751,6 +5751,13 @@ static VkResult pvr_setup_descriptor_mappings(
             (struct pvr_const_map_entry_special_buffer *)entries;
 
          switch (special_buff_entry->buffer_type) {
+         case PVR_BUFFER_TYPE_COMPILE_TIME:
+            PVR_WRITE(qword_buffer,
+                      descriptor_state->static_consts->dev_addr.addr,
+                      special_buff_entry->const_offset,
+                      pds_info->data_size_in_dwords);
+            break;
+
          case PVR_BUFFER_TYPE_UBO: {
             const unsigned desc_set = special_buff_entry->data & 0xffff;
             const unsigned binding = special_buff_entry->data >> 16;
