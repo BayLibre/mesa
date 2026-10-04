@@ -424,8 +424,54 @@ static void igrp_pair(pco_igrp *a, pco_igrp *b)
 }
 
 /**
+ * \brief Returns whether igrp b is a plain copy of the result of igrp a, which
+ *        can then be written by a through W1 as well.
+ */
+static bool igrp_is_fwd_mov(const pco_igrp *a, const pco_igrp *b)
+{
+   const pco_instr *instr = b->instrs[PCO_OP_PHASE_0];
+   if (instr->op != PCO_OP_MBYP || pco_ref_has_mods_set(instr->src[0]))
+      return false;
+
+   if (a->hdr.cc != b->hdr.cc)
+      return false;
+
+   pco_ref src = b->srcs.s[0];
+   pco_ref dest = a->dests.w[0];
+   if (!pco_ref_is_reg(src) || pco_ref_has_mods_set(src) ||
+       pco_ref_get_reg_class(src) != pco_ref_get_reg_class(dest) ||
+       src.val != dest.val || pco_ref_get_chans(src) != 1 ||
+       pco_ref_get_chans(dest) != 1)
+      return false;
+
+   if (refs_may_alias(b->dests.w[0], dest))
+      return false;
+
+   pco_igrp tmp = *a;
+   tmp.dests.w[1] = b->dests.w[0];
+
+   return pco_igrp_dest_variant_try(&tmp) >= 0;
+}
+
+/**
+ * \brief Makes igrp a also write its result to the destination of the copy
+ *        b, then deletes b.
+ */
+static void igrp_fwd_mov(pco_igrp *a, pco_igrp *b)
+{
+   a->iss.is[5] = pco_ref_io(PCO_IO_FT0);
+   a->dests.w[1] = b->dests.w[0];
+   a->hdr.w1p = true;
+   a->variant.dest = pco_igrp_dest_variant(a);
+
+   list_del(&b->link);
+   ralloc_free(b);
+}
+
+/**
  * \brief Co-issues independent lone phase 0 ops of a block in pairs, the
- *        later one being hoisted into phase 1 of the earlier one.
+ *        later one being hoisted into phase 1 of the earlier one. A later
+ *        copy of the result of a lone phase 0 op is folded into it instead.
  *
  * \param[in,out] block PCO block.
  */
@@ -455,7 +501,8 @@ static void coissue_block(pco_block *block)
          if (!igrp_is_coissue_candidate(b))
             continue;
 
-         if (igrps_can_pair(a, b)) {
+         bool fwd = igrp_is_fwd_mov(a, b);
+         if (fwd || igrps_can_pair(a, b)) {
             bool ok = true;
             for (pco_igrp *j = list_entry(a->link.next, pco_igrp, link);
                  j != b;
@@ -467,7 +514,10 @@ static void coissue_block(pco_block *block)
             }
 
             if (ok) {
-               igrp_pair(a, b);
+               if (fwd)
+                  igrp_fwd_mov(a, b);
+               else
+                  igrp_pair(a, b);
                break;
             }
          }
