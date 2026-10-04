@@ -114,32 +114,26 @@ static bool vec_has_repeated_ssas(pco_instr *vec)
 }
 
 static void pco_extend_live_range(pco_ref origin,
-                                  pco_ref current_ref,
-                                  pco_instr *current_instr,
+                                  const struct util_dynarray *uses,
                                   struct hash_table_u64 *overrides,
                                   struct live_range *live_ranges)
 {
-   pco_foreach_instr_in_func_from (instr, current_instr) {
-      pco_foreach_instr_src_ssa (psrc, instr) {
-         if (current_ref.val != psrc->val)
-            continue;
+   util_dynarray_foreach (uses, pco_instr *, _instr) {
+      pco_instr *instr = *_instr;
 
-         pco_foreach_instr_dest_ssa (pdest, instr) {
-            struct vec_override *override =
-               _mesa_hash_table_u64_search(overrides, pdest->val);
+      pco_foreach_instr_dest_ssa (pdest, instr) {
+         struct vec_override *override =
+            _mesa_hash_table_u64_search(overrides, pdest->val);
 
-            if (override) {
-               live_ranges[origin.val].end =
-                  MAX2(live_ranges[origin.val].end,
-                       live_ranges[override->ref.val].end);
-               break;
-            }
-
+         if (override) {
             live_ranges[origin.val].end =
-               MAX2(live_ranges[origin.val].end, instr->index);
+               MAX2(live_ranges[origin.val].end,
+                    live_ranges[override->ref.val].end);
+            break;
          }
 
-         break;
+         live_ranges[origin.val].end =
+            MAX2(live_ranges[origin.val].end, instr->index);
       }
    }
 }
@@ -784,6 +778,26 @@ static bool pco_ra_func(pco_func *func, pco_ra_ctx *ctx)
       }
    }
 
+   /* Instructions reading each comp result, once per read. */
+   BITSET_WORD *comp_dests =
+      rzalloc_array_size(ra_regs, sizeof(*comp_dests), BITSET_WORDS(num_ssas));
+   struct util_dynarray *comp_dest_uses =
+      ralloc_array(ra_regs, struct util_dynarray, num_ssas);
+   for (unsigned u = 0; u < num_ssas; ++u)
+      util_dynarray_init(&comp_dest_uses[u], ra_regs);
+
+   pco_foreach_instr_in_func (instr, func) {
+      if (instr->op == PCO_OP_COMP && pco_ref_is_ssa(instr->dest[0]))
+         BITSET_SET(comp_dests, instr->dest[0].val);
+   }
+
+   pco_foreach_instr_in_func (instr, func) {
+      pco_foreach_instr_src_ssa (psrc, instr) {
+         if (BITSET_TEST(comp_dests, psrc->val))
+            util_dynarray_append(&comp_dest_uses[psrc->val], instr);
+      }
+   }
+
    /* Extend lifetimes of non-overriden vecs that have comp instructions. */
    pco_foreach_instr_in_func (instr, func) {
       if (instr->op != PCO_OP_COMP)
@@ -802,7 +816,10 @@ static bool pco_ra_func(pco_func *func, pco_ra_ctx *ctx)
          continue;
       }
 
-      pco_extend_live_range(src_vec, dest, instr, overrides, live_ranges);
+      pco_extend_live_range(src_vec,
+                            &comp_dest_uses[dest.val],
+                            overrides,
+                            live_ranges);
    }
 
    /* Extend lifetimes of vars in loops. */
