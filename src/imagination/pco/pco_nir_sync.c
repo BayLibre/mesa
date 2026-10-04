@@ -54,7 +54,7 @@ lower_barrier(nir_builder *b, nir_intrinsic_instr *intr, void *cb_data)
 
    /* TODO: We might be able to re-use barrier counters. */
    unsigned counter_offset = info->shared_size;
-   info->shared_size += sizeof(uint32_t);
+   info->shared_size += 2 * sizeof(uint32_t);
    info->zero_initialize_shared_memory = true;
 
    *uses_usclib = true;

@@ -55,28 +55,50 @@ usclib_emu_global_atomic_comp_swap(uint2 addr, uint compare, uint data)
    return result;
 }
 
+/*
+ * The barrier state is two words at counter_offset: the number of slots that
+ * reached the barrier, and a generation bumped each time all of them did.
+ * Waiting slots wait for the generation to change rather than for the
+ * counter to drop to zero: with the barrier in a loop, a slot released first
+ * can already count itself in for the next iteration before a sleeping slot
+ * gets the mutex back, and that one would then never see the counter at zero.
+ */
 void
 usclib_barrier(uint num_slots, uint counter_offset)
 {
    #define load_barrier_counter() nir_load_shared(counter_offset, 0, 0, 4, 0)
    #define store_barrier_counter(value) nir_store_shared(value, counter_offset, 0, 0, 0x1, 4, 0)
+   #define load_barrier_gen() nir_load_shared(counter_offset + 4, 0, 0, 4, 0)
+   #define store_barrier_gen(value) nir_store_shared(value, counter_offset + 4, 0, 0, 0x1, 4, 0)
 
    bool is_inst_zero = !nir_load_instance_num_pco();
 
    nir_mutex_pco(PCO_MUTEX_ID_BARRIER, PCO_MUTEX_OP_LOCK);
+
+   uint gen = load_barrier_gen();
 
    if (is_inst_zero)
       store_barrier_counter(load_barrier_counter() + 1);
 
    bool all_slots_done = load_barrier_counter() == num_slots;
    if (all_slots_done) {
-      if (is_inst_zero)
+      if (is_inst_zero) {
          store_barrier_counter(0);
+         store_barrier_gen(gen + 1);
+      }
+
+      /*
+       * The wakeup does not wait for the store above to land: a slot woken
+       * before that would still see the old generation and go back to sleep
+       * with nobody left to wake it up.
+       */
+      while (load_barrier_gen() == gen)
+         ;
    } else {
       do {
          nir_mutex_pco(PCO_MUTEX_ID_BARRIER, PCO_MUTEX_OP_RELEASE_SLEEP);
          nir_mutex_pco(PCO_MUTEX_ID_BARRIER, PCO_MUTEX_OP_LOCK);
-      } while (load_barrier_counter() != 0);
+      } while (load_barrier_gen() == gen);
    }
 
    nir_mutex_pco(PCO_MUTEX_ID_BARRIER, PCO_MUTEX_OP_RELEASE_WAKEUP);
