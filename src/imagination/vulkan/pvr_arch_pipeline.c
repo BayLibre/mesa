@@ -77,6 +77,11 @@
 /* Shared registers a stage may spend on preloaded uniform buffer data. */
 #define PVR_UBO_PRELOAD_MAX_DWORDS 64U
 
+/* Loads a fragment shader must make from a buffer per invocation before its
+ * preload, repeated for every tile, is worth it.
+ */
+#define PVR_FS_PRELOAD_MIN_LOADS 1U
+
 /*****************************************************************************
    PDS functions
 *****************************************************************************/
@@ -2648,14 +2653,16 @@ static void pvr_setup_descriptors(pco_data *data,
       data->common.shareds += count;
    }
 
-   /* Preload the start of uniform buffers read at constant offsets. Their
-    * contents can't change during a draw, so the loads left out still read
-    * the same data from memory. Vertex shaders only: the fragment upload
-    * program runs again for every tile a draw covers, which costs more than
-    * the loads it saves.
+   /* Preload the start of uniform buffers, and of storage buffers the shader
+    * doesn't write, read at constant offsets. Their contents can't change
+    * during a draw, so the loads left out still read the same data from
+    * memory. The fragment upload program runs again for every tile a draw
+    * covers, so fragment shaders only preload buffers read often enough to
+    * pay for it.
     */
+   const bool fragment = stage == MESA_SHADER_FRAGMENT;
    unsigned ubo_preload_budget =
-      stage == MESA_SHADER_VERTEX ? PVR_UBO_PRELOAD_MAX_DWORDS : 0;
+      stage == MESA_SHADER_VERTEX || fragment ? PVR_UBO_PRELOAD_MAX_DWORDS : 0;
    for (unsigned u = 0; u < data->common.ubo_preload_count; ++u) {
       pco_ubo_preload *preload = &data->common.ubo_preloads[u];
       const struct pvr_descriptor_set_layout *set_layout =
@@ -2665,7 +2672,9 @@ static void pvr_setup_descriptors(pco_data *data,
       const unsigned count = MIN2(preload->used, ubo_preload_budget);
 
       if (data->common.robust_buffer_access || !count ||
-          layout_binding->type != VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER ||
+          (fragment && preload->loads < PVR_FS_PRELOAD_MIN_LOADS) ||
+          (layout_binding->type != VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER &&
+           layout_binding->type != VK_DESCRIPTOR_TYPE_STORAGE_BUFFER) ||
           (layout_binding->flags &
            VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT)) {
          continue;

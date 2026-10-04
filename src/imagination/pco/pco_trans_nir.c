@@ -1295,8 +1295,9 @@ static pco_instr *trans_load_buffer(trans_ctx *tctx,
       elem = nir_src_comp_as_uint(intr->src[0], 1);
    }
 
-   if (intr->intrinsic == nir_intrinsic_load_ubo && !is_dynidx && !elem &&
-       nir_src_is_const(intr->src[1])) {
+   if ((intr->intrinsic == nir_intrinsic_load_ubo ||
+        intr->intrinsic == nir_intrinsic_load_ssbo) &&
+       !is_dynidx && !elem && nir_src_is_const(intr->src[1])) {
       const pco_range *preload = ubo_preload_range(common, packed_desc);
       unsigned offset = nir_src_as_uint(intr->src[1]);
 

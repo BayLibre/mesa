@@ -389,9 +389,11 @@ static void gather_ubo_preload_data(nir_intrinsic_instr *intr,
    }
 
    preload->used = MAX2(preload->used, end);
+   preload->loads++;
 }
 
-static void gather_common_store_data(nir_intrinsic_instr *intr,
+static void gather_common_store_data(const nir_shader *shader,
+                                     nir_intrinsic_instr *intr,
                                      pco_common_data *common)
 {
    nir_src *offset_src;
@@ -404,6 +406,16 @@ static void gather_common_store_data(nir_intrinsic_instr *intr,
 
    case nir_intrinsic_load_ubo:
       gather_ubo_preload_data(intr, common);
+      return;
+
+   /* A storage buffer the shader never writes can only change between
+    * draws, like a uniform buffer.
+    */
+   case nir_intrinsic_load_ssbo:
+      if (!shader->info.writes_memory &&
+          !(nir_intrinsic_access(intr) & (ACCESS_VOLATILE | ACCESS_COHERENT))) {
+         gather_ubo_preload_data(intr, common);
+      }
       return;
 
    default:
@@ -427,13 +439,13 @@ static void gather_common_store_data(nir_intrinsic_instr *intr,
  * \param[in,out] cb_data Callback data.
  * \return True if the shader was modified (always return false).
  */
-static bool gather_common_data_pass(UNUSED struct nir_builder *b,
+static bool gather_common_data_pass(struct nir_builder *b,
                                     nir_intrinsic_instr *intr,
                                     void *cb_data)
 {
    pco_data *data = cb_data;
    data->common.uses.atomics |= intr_op_is_atomic(intr->intrinsic);
-   gather_common_store_data(intr, &data->common);
+   gather_common_store_data(b->shader, intr, &data->common);
 
    return false;
 }

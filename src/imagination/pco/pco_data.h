@@ -202,6 +202,7 @@ typedef struct _pco_ubo_preload {
    unsigned desc_set;
    unsigned binding;
    unsigned used; /** Dwords read at constant offsets from the start. */
+   unsigned loads; /** Number of loads at those offsets. */
    pco_range range; /** Shared registers holding them, if preloaded. */
 } pco_ubo_preload;
 
