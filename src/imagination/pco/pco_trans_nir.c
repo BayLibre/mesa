@@ -534,6 +534,12 @@ static pco_instr *trans_load_input_fs(trans_ctx *tctx,
          pco_ref xy_p[] = { pco_ref_hwreg(PCO_SR_X_P, PCO_REG_CLASS_SPEC),
                             pco_ref_hwreg(PCO_SR_Y_P, PCO_REG_CLASS_SPEC) };
 
+         /* The sample shading bit of the meta is only ever set for shaders
+          * that use sample shading.
+          */
+         if (!tctx->shader->is_internal && !fs_data->uses.sample_shading)
+            return pco_mov(&tctx->b, dest, xy_p[component]);
+
          return pco_csel(&tctx->b,
                          dest,
                          fs_is_single_sampled(tctx),
