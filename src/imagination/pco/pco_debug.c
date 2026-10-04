@@ -45,6 +45,9 @@ static const struct debug_named_value pco_debug_options[] = {
    { "no_coissue",
      PCO_DEBUG_NO_COISSUE,
      "Do not co-issue independent instructions in one group." },
+   { "no_sched",
+     PCO_DEBUG_NO_SCHED,
+     "Do not reorder ALU instructions before register allocation." },
    DEBUG_NAMED_VALUE_END,
 };
 

@@ -71,6 +71,7 @@ enum pco_debug {
    PCO_DEBUG_RA_SKIP_OPT = BITFIELD64_BIT(7),
    PCO_DEBUG_NO_DMA_CACHE = BITFIELD64_BIT(8),
    PCO_DEBUG_NO_COISSUE = BITFIELD64_BIT(9),
+   PCO_DEBUG_NO_SCHED = BITFIELD64_BIT(10),
 };
 
 extern uint64_t pco_debug;
@@ -1843,6 +1844,7 @@ bool pco_opt(pco_shader *shader);
 bool pco_ra(pco_shader *shader);
 bool pco_schedule(pco_shader *shader);
 bool pco_reuse_imms(pco_shader *shader);
+bool pco_schedule_alu(pco_shader *shader);
 bool pco_shrink_vecs(pco_shader *shader);
 
 typedef enum {

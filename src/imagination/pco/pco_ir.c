@@ -55,6 +55,7 @@ void pco_process_ir(pco_ctx *ctx, pco_shader *shader)
    PCO_PASS(_, shader, pco_schedule);
    PCO_PASS(_, shader, pco_pre_ra_legalize);
    PCO_PASS(_, shader, pco_reuse_imms);
+   PCO_PASS(_, shader, pco_schedule_alu);
    PCO_PASS(_, shader, pco_ra);
    PCO_PASS(_, shader, pco_post_ra_legalize);
    PCO_PASS(_, shader, pco_end);
