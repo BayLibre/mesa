@@ -539,6 +539,97 @@ static bool should_vectorize_mem_cb(unsigned align_mul,
    return true;
 }
 
+/* Distance in instructions past which an address is recomputed at its use. */
+#define REMAT_ADDRESS_MIN_DISTANCE 32
+
+/* Clones the cheap integer chain computing an address before the cursor.
+ * Leaves that aren't part of it are referenced as they are.
+ */
+static nir_def *remat_address_chain(nir_builder *b, nir_def *def, unsigned depth)
+{
+   nir_instr *instr = nir_def_instr(def);
+
+   if (instr->type == nir_instr_type_load_const) {
+      nir_instr *clone = nir_instr_clone(b->shader, instr);
+      nir_builder_instr_insert(b, clone);
+      return &nir_instr_as_load_const(clone)->def;
+   }
+
+   if (!depth || instr->type != nir_instr_type_alu)
+      return def;
+
+   nir_alu_instr *alu = nir_instr_as_alu(instr);
+   switch (alu->op) {
+   case nir_op_uadd64_32:
+   case nir_op_iadd:
+   case nir_op_ishl:
+   case nir_op_imul:
+      break;
+   default:
+      return def;
+   }
+
+   const unsigned num_inputs = nir_op_infos[alu->op].num_inputs;
+   nir_def *srcs[NIR_ALU_MAX_INPUTS];
+   for (unsigned i = 0; i < num_inputs; ++i)
+      srcs[i] = remat_address_chain(b, alu->src[i].src.ssa, depth - 1);
+
+   nir_alu_instr *clone = nir_instr_as_alu(nir_instr_clone(b->shader, instr));
+   nir_builder_instr_insert(b, &clone->instr);
+   for (unsigned i = 0; i < num_inputs; ++i)
+      nir_src_rewrite(&clone->src[i].src, srcs[i]);
+
+   return &clone->def;
+}
+
+/* CSE merges the address computations of accesses to the same location, such
+ * as shared memory lowered to global memory, so one 64-bit address can stay
+ * live from the first access to the last. Recompute it next to the far uses
+ * instead: it costs a few integer operations, holding it can cost the
+ * register allocation.
+ */
+static bool remat_addresses(nir_shader *shader)
+{
+   bool progress = false;
+
+   nir_foreach_function_impl (impl, shader) {
+      nir_index_instrs(impl);
+
+      /* Collect first: the clones go into the blocks being walked. */
+      struct util_dynarray addrs = UTIL_DYNARRAY_INIT;
+      nir_foreach_block (block, impl) {
+         nir_foreach_instr (instr, block) {
+            if (instr->type == nir_instr_type_alu &&
+                nir_instr_as_alu(instr)->op == nir_op_uadd64_32)
+               util_dynarray_append(&addrs, instr);
+         }
+      }
+
+      util_dynarray_foreach (&addrs, nir_instr *, pinstr) {
+         nir_instr *instr = *pinstr;
+         nir_def *def = &nir_instr_as_alu(instr)->def;
+
+         nir_foreach_use_safe (use, def) {
+            nir_instr *use_instr = nir_src_use_instr(use);
+
+            if (use_instr->type == nir_instr_type_phi ||
+                use_instr->index < instr->index + REMAT_ADDRESS_MIN_DISTANCE)
+               continue;
+
+            nir_builder b = nir_builder_at(nir_before_instr(use_instr));
+            nir_src_rewrite(use, remat_address_chain(&b, def, 3));
+            progress = true;
+         }
+      }
+
+      util_dynarray_fini(&addrs);
+
+      nir_progress(progress, impl, nir_metadata_control_flow);
+   }
+
+   return progress;
+}
+
 static void pco_nir_opt(pco_ctx *ctx, nir_shader *nir, pco_data *data, bool algebraic)
 {
    bool progress;
@@ -1280,6 +1371,7 @@ void pco_postprocess_nir(pco_ctx *ctx, nir_shader *nir, pco_data *data)
 
    progress = false;
    NIR_PASS(progress, nir, nir_opt_rematerialize_compares);
+   NIR_PASS(progress, nir, remat_addresses);
    if (progress)
       NIR_PASS(_, nir, nir_opt_dce);
 
