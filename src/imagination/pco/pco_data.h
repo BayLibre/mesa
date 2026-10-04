@@ -188,6 +188,18 @@ typedef struct _pco_push_const_data {
    unsigned used;
 } pco_push_const_data;
 
+#define PCO_MAX_UBO_PRELOADS 4U
+
+/** A uniform buffer only read at constant offsets, which the descriptor
+ * upload program can copy into shared registers.
+ */
+typedef struct _pco_ubo_preload {
+   unsigned desc_set;
+   unsigned binding;
+   unsigned used; /** Dwords read at constant offsets from the start. */
+   pco_range range; /** Shared registers holding them, if preloaded. */
+} pco_ubo_preload;
+
 /** PCO common data. */
 typedef struct _pco_common_data {
    /** System value mappings. */
@@ -198,6 +210,9 @@ typedef struct _pco_common_data {
 
    /** Push constant data. */
    pco_push_const_data push_consts;
+
+   pco_ubo_preload ubo_preloads[PCO_MAX_UBO_PRELOADS];
+   unsigned ubo_preload_count;
 
    pco_range point_sampler;
    pco_range ia_sampler;

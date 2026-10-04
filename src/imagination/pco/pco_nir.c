@@ -339,6 +339,58 @@ static inline bool intr_op_is_atomic(nir_intrinsic_op op)
    return false;
 }
 
+static inline bool is_inline_ubo(unsigned desc_set,
+                                 unsigned binding,
+                                 const pco_common_data *common);
+
+/* Records how far into the buffer a uniform buffer load at a constant offset
+ * of element 0 reads, so the start of that buffer can be preloaded.
+ */
+static void gather_ubo_preload_data(nir_intrinsic_instr *intr,
+                                    pco_common_data *common)
+{
+   if (!nir_src_is_const(intr->src[0]) || !nir_src_is_const(intr->src[1]) ||
+       intr->def.bit_size != 32) {
+      return;
+   }
+
+   unsigned desc_set;
+   unsigned binding;
+   pco_unpack_desc(nir_src_comp_as_uint(intr->src[0], 0), &desc_set, &binding);
+   if (nir_src_comp_as_uint(intr->src[0], 1) ||
+       is_inline_ubo(desc_set, binding, common)) {
+      return;
+   }
+
+   unsigned offset = nir_src_as_uint(intr->src[1]);
+   if (offset % sizeof(uint32_t))
+      return;
+
+   unsigned end = offset / sizeof(uint32_t) + intr->def.num_components;
+
+   pco_ubo_preload *preload = NULL;
+   for (unsigned u = 0; u < common->ubo_preload_count; ++u) {
+      if (common->ubo_preloads[u].desc_set == desc_set &&
+          common->ubo_preloads[u].binding == binding) {
+         preload = &common->ubo_preloads[u];
+         break;
+      }
+   }
+
+   if (!preload) {
+      if (common->ubo_preload_count == PCO_MAX_UBO_PRELOADS)
+         return;
+
+      preload = &common->ubo_preloads[common->ubo_preload_count++];
+      *preload = (pco_ubo_preload){
+         .desc_set = desc_set,
+         .binding = binding,
+      };
+   }
+
+   preload->used = MAX2(preload->used, end);
+}
+
 static void gather_common_store_data(nir_intrinsic_instr *intr,
                                      pco_common_data *common)
 {
@@ -349,6 +401,10 @@ static void gather_common_store_data(nir_intrinsic_instr *intr,
       offset_src = &intr->src[0];
       num_components = intr->def.num_components;
       break;
+
+   case nir_intrinsic_load_ubo:
+      gather_ubo_preload_data(intr, common);
+      return;
 
    default:
       return;

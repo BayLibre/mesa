@@ -1606,6 +1606,7 @@ void pvr_pds_generate_descriptor_upload_program(
       bool halt = last_dma && !input_program->secondary_program_present;
 
       switch (buffer->type) {
+      case PVR_BUFFER_TYPE_UBO:
       case PVR_BUFFER_TYPE_DYNAMIC:
       case PVR_BUFFER_TYPE_PUSH_CONSTS:
       case PVR_BUFFER_TYPE_BLEND_CONSTS:
@@ -1629,6 +1630,11 @@ void pvr_pds_generate_descriptor_upload_program(
          special_buffer_entry->size_in_dwords = buffer->size_in_dwords;
 
          switch (buffer->type) {
+         case PVR_BUFFER_TYPE_UBO:
+            special_buffer_entry->data = buffer->desc_set |
+                                         (uint32_t)buffer->binding << 16;
+            break;
+
          case PVR_BUFFER_TYPE_DYNAMIC:
             special_buffer_entry->data = buffer->desc_set;
             break;

@@ -5735,6 +5735,50 @@ static VkResult pvr_setup_descriptor_mappings(
             (struct pvr_const_map_entry_special_buffer *)entries;
 
          switch (special_buff_entry->buffer_type) {
+         case PVR_BUFFER_TYPE_UBO: {
+            const unsigned desc_set = special_buff_entry->data & 0xffff;
+            const unsigned binding = special_buff_entry->data >> 16;
+            const uint32_t size =
+               special_buff_entry->size_in_dwords * sizeof(uint32_t);
+            const struct pvr_descriptor_set *descriptor_set;
+            struct pvr_buffer_descriptor buffer_desc;
+
+            assert(desc_set < PVR_MAX_DESCRIPTOR_SETS);
+
+            descriptor_set = desc_state->sets[desc_set];
+            assert(descriptor_set);
+            assert(binding < descriptor_set->layout->binding_count);
+
+            memcpy(&buffer_desc,
+                   (uint8_t *)descriptor_set->mapping +
+                      descriptor_set->layout->bindings[binding].offset,
+                   sizeof(buffer_desc));
+
+            /* A null descriptor reads as zeros, and a range smaller than
+             * what the shader reads is undefined: preload zeros rather than
+             * let the DMA run past the buffer.
+             */
+            if (!buffer_desc.addr || buffer_desc.size < size) {
+               struct pvr_suballoc_bo *zero_bo;
+
+               result = pvr_arch_cmd_buffer_upload_general(cmd_buffer,
+                                                           NULL,
+                                                           size,
+                                                           &zero_bo);
+               if (result != VK_SUCCESS)
+                  return result;
+
+               memset(pvr_bo_suballoc_get_map_addr(zero_bo), 0, size);
+               buffer_desc.addr = zero_bo->dev_addr.addr;
+            }
+
+            PVR_WRITE(qword_buffer,
+                      buffer_desc.addr,
+                      special_buff_entry->const_offset,
+                      pds_info->data_size_in_dwords);
+            break;
+         }
+
          case PVR_BUFFER_TYPE_DYNAMIC: {
             unsigned desc_set = special_buff_entry->data;
             const struct pvr_descriptor_set *descriptor_set;

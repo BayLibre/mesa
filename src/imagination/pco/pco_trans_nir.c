@@ -1244,6 +1244,24 @@ static pco_instr *trans_atomic_shared(trans_ctx *tctx,
    return instr;
 }
 
+/* Shared registers preloaded with the start of a uniform buffer, if any. */
+static const pco_range *ubo_preload_range(const pco_common_data *common,
+                                          uint32_t packed_desc)
+{
+   unsigned desc_set;
+   unsigned binding;
+   pco_unpack_desc(packed_desc, &desc_set, &binding);
+
+   for (unsigned u = 0; u < common->ubo_preload_count; ++u) {
+      const pco_ubo_preload *preload = &common->ubo_preloads[u];
+
+      if (preload->desc_set == desc_set && preload->binding == binding)
+         return preload->range.count ? &preload->range : NULL;
+   }
+
+   return NULL;
+}
+
 static pco_instr *trans_load_buffer(trans_ctx *tctx,
                                     nir_intrinsic_instr *intr,
                                     pco_ref dest,
@@ -1275,6 +1293,34 @@ static pco_instr *trans_load_buffer(trans_ctx *tctx,
    } else {
       packed_desc = nir_src_comp_as_uint(intr->src[0], 0);
       elem = nir_src_comp_as_uint(intr->src[0], 1);
+   }
+
+   if (intr->intrinsic == nir_intrinsic_load_ubo && !is_dynidx && !elem &&
+       nir_src_is_const(intr->src[1])) {
+      const pco_range *preload = ubo_preload_range(common, packed_desc);
+      unsigned offset = nir_src_as_uint(intr->src[1]);
+
+      if (preload && !(offset % sizeof(uint32_t)) &&
+          offset / sizeof(uint32_t) + chans <= preload->count) {
+         const unsigned start = preload->start + offset / sizeof(uint32_t);
+
+         if (chans <= 4) {
+            pco_ref src =
+               pco_ref_hwreg_vec(start, PCO_REG_CLASS_SHARED, chans);
+            return pco_mbyp(&tctx->b, dest, src, .rpt = chans);
+         }
+
+         /* Vectorized loads can be wider than a repeated move. */
+         pco_ref comps[NIR_MAX_VEC_COMPONENTS];
+         for (unsigned u = 0; u < chans; ++u) {
+            comps[u] = pco_ref_new_ssa32(tctx->func);
+            pco_mbyp(&tctx->b,
+                     comps[u],
+                     pco_ref_hwreg(start + u, PCO_REG_CLASS_SHARED));
+         }
+
+         return pco_vec(&tctx->b, dest, chans, comps);
+      }
    }
 
    unsigned stride;

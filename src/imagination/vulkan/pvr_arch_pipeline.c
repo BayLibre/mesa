@@ -74,6 +74,9 @@
 #include "vulkan/runtime/vk_pipeline.h"
 #include "vulkan/vulkan_core.h"
 
+/* Shared registers a stage may spend on preloaded uniform buffer data. */
+#define PVR_UBO_PRELOAD_MAX_DWORDS 64U
+
 /*****************************************************************************
    PDS functions
 *****************************************************************************/
@@ -541,6 +544,21 @@ static VkResult pvr_pds_descriptor_program_create_and_upload(
          .type = PVR_BUFFER_TYPE_PUSH_CONSTS,
          .size_in_dwords = data->common.push_consts.range.count,
          .destination = data->common.push_consts.range.start,
+      };
+   }
+
+   for (unsigned u = 0; u < data->common.ubo_preload_count; ++u) {
+      const pco_ubo_preload *preload = &data->common.ubo_preloads[u];
+
+      if (!preload->range.count)
+         continue;
+
+      program.buffers[program.buffer_count++] = (struct pvr_pds_buffer){
+         .type = PVR_BUFFER_TYPE_UBO,
+         .size_in_dwords = preload->range.count,
+         .destination = preload->range.start,
+         .desc_set = preload->desc_set,
+         .binding = preload->binding,
       };
    }
 
@@ -2628,6 +2646,38 @@ static void pvr_setup_descriptors(pco_data *data,
       };
 
       data->common.shareds += count;
+   }
+
+   /* Preload the start of uniform buffers read at constant offsets. Their
+    * contents can't change during a draw, so the loads left out still read
+    * the same data from memory. Vertex shaders only: the fragment upload
+    * program runs again for every tile a draw covers, which costs more than
+    * the loads it saves.
+    */
+   unsigned ubo_preload_budget =
+      stage == MESA_SHADER_VERTEX ? PVR_UBO_PRELOAD_MAX_DWORDS : 0;
+   for (unsigned u = 0; u < data->common.ubo_preload_count; ++u) {
+      pco_ubo_preload *preload = &data->common.ubo_preloads[u];
+      const struct pvr_descriptor_set_layout *set_layout =
+         vk_to_pvr_descriptor_set_layout(layout->set_layouts[preload->desc_set]);
+      const struct pvr_descriptor_set_layout_binding *layout_binding =
+         &set_layout->bindings[preload->binding];
+      const unsigned count = MIN2(preload->used, ubo_preload_budget);
+
+      if (data->common.robust_buffer_access || !count ||
+          layout_binding->type != VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER ||
+          (layout_binding->flags &
+           VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT)) {
+         continue;
+      }
+
+      preload->range = (pco_range){
+         .start = data->common.shareds,
+         .count = count,
+      };
+
+      data->common.shareds += count;
+      ubo_preload_budget -= count;
    }
 
    if (data->common.uses.point_sampler) {
