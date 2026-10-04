@@ -3060,7 +3060,7 @@ pvr_graphics_pipeline_compile(struct pvr_device *const device,
                                          gfx_pipeline->base.pipeline_flags,
                                          &pCreateInfo->pStages[stage_index],
                                          pco_spirv_options(),
-                                         pco_nir_options(),
+                                         pco_nir_graphics_options(),
                                          shader_mem_ctx,
                                          &nir_shaders[stage]);
       if (result != VK_SUCCESS)

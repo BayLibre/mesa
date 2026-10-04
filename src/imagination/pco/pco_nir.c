@@ -36,48 +36,61 @@ static const struct spirv_to_nir_options spirv_options = {
    .min_ssbo_alignment = PVR_STORAGE_BUFFER_OFFSET_ALIGNMENT,
 };
 
-/** NIR options. */
-static const nir_shader_compiler_options nir_options = {
-   .discard_is_demote = true,
-   .float_mul_add32 = nir_float_muladd_support_has_ffma |
-                      nir_float_muladd_support_fuse,
-
-   .has_f2i32_rtne = true,
-   .has_fused_comp_and_csel = true,
-
-   .instance_id_includes_base_index = true,
-
-   .lower_device_index_to_zero = true,
-
-   .lower_fdiv = true,
-   .lower_ffract = true,
-   .lower_find_lsb = true,
-   .lower_fquantize2f16 = true,
-   .lower_flrp32 = true,
-   .lower_fminmax_signed_zero = true,
-   .lower_fmod = true,
-   .lower_fpow = true,
-   .lower_fsqrt = true,
-   .lower_iadd_sat = true,
-   .lower_ifind_msb = true,
-   .lower_layer_fs_input_to_sysval = true,
-   .lower_mul_2x32_64 = true,
-   .compact_arrays = true,
-   .scalarize_ddx = true,
-
-   .lower_int64_options = ~0U,
-   .lower_pack_64_2x32 = true,
-   .lower_pack_64_2x32_split = true,
-   .lower_unpack_64_2x32_split = true,
-
-   .lower_interpolate_at = true,
-
-   .lower_helper_invocation = true,
-
-   .max_unroll_iterations = 16,
-   .max_samples = 4,
-
+/** NIR options shared by every stage. */
+#define PCO_NIR_OPTIONS \
+   .discard_is_demote = true, \
+   .float_mul_add32 = nir_float_muladd_support_has_ffma | \
+   nir_float_muladd_support_fuse, \
+   \
+   .has_f2i32_rtne = true, \
+   .has_fused_comp_and_csel = true, \
+   \
+   .instance_id_includes_base_index = true, \
+   \
+   .lower_device_index_to_zero = true, \
+   \
+   .lower_fdiv = true, \
+   .lower_ffract = true, \
+   .lower_find_lsb = true, \
+   .lower_fquantize2f16 = true, \
+   .lower_flrp32 = true, \
+   .lower_fminmax_signed_zero = true, \
+   .lower_fmod = true, \
+   .lower_fpow = true, \
+   .lower_fsqrt = true, \
+   .lower_iadd_sat = true, \
+   .lower_ifind_msb = true, \
+   .lower_layer_fs_input_to_sysval = true, \
+   .lower_mul_2x32_64 = true, \
+   .compact_arrays = true, \
+   .scalarize_ddx = true, \
+   \
+   .lower_int64_options = ~0U, \
+   .lower_pack_64_2x32 = true, \
+   .lower_pack_64_2x32_split = true, \
+   .lower_unpack_64_2x32_split = true, \
+   \
+   .lower_interpolate_at = true, \
+   \
+   .lower_helper_invocation = true, \
+   \
+   .max_unroll_iterations = 16, \
+   .max_samples = 4, \
+   \
    .io_options = nir_io_vectorizer_ignores_types,
+
+static const nir_shader_compiler_options nir_options = {
+   PCO_NIR_OPTIONS
+};
+
+/* Graphics shaders also unroll loops whose loads can be pipelined, such as the
+ * taps of a filter: their per-tap offsets become constants that can be
+ * preloaded instead of being loaded in each iteration. Compute shaders keep
+ * the default limit, as unrolling their nested loops blows up compile times.
+ */
+static const nir_shader_compiler_options nir_options_graphics = {
+   PCO_NIR_OPTIONS
+   .max_unroll_iterations_aggressive = 64,
 };
 
 /**
@@ -99,6 +112,16 @@ const struct spirv_to_nir_options *pco_spirv_options(void)
 const nir_shader_compiler_options *pco_nir_options(void)
 {
    return &nir_options;
+}
+
+/**
+ * \brief Returns the NIR options for graphics shaders.
+ *
+ * \return The NIR options.
+ */
+const nir_shader_compiler_options *pco_nir_graphics_options(void)
+{
+   return &nir_options_graphics;
 }
 
 /**

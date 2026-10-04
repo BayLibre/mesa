@@ -35,6 +35,7 @@ void pco_ctx_update_dev_info(pco_ctx *ctx,
                              const struct pvr_device_info *dev_info);
 const struct spirv_to_nir_options *pco_spirv_options(void);
 const nir_shader_compiler_options *pco_nir_options(void);
+const nir_shader_compiler_options *pco_nir_graphics_options(void);
 
 void pco_preprocess_nir(pco_ctx *ctx, nir_shader *nir, pco_data *data);
 void pco_link_nir(pco_ctx *ctx,
