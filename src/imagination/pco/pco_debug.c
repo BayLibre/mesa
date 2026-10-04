@@ -42,6 +42,9 @@ static const struct debug_named_value pco_debug_options[] = {
      PCO_DEBUG_RA_SKIP_OPT,
      "Skip attempting to allocate temps with the optimal amount during RA." },
    { "no_dma_cache", PCO_DEBUG_NO_DMA_CACHE, "Disable DMA cache." },
+   { "no_coissue",
+     PCO_DEBUG_NO_COISSUE,
+     "Do not co-issue independent instructions in one group." },
    DEBUG_NAMED_VALUE_END,
 };
 
