@@ -408,15 +408,70 @@ static inline bool can_fwd_prop_src(const pco_instr *to_instr,
  * \param[in] instr Instruction to try and forward-propagate.
  * \return True if forward-propagation was successful.
  */
-static inline bool try_fwd_prop_instr(pco_instr **writes, pco_instr *instr)
+static inline bool is_read_only_copy(const pco_instr *instr)
+{
+   if (instr->op != PCO_OP_MBYP)
+      return false;
+
+   if (pco_instr_get_exec_cnd(instr) != PCO_EXEC_CND_E1_ZX)
+      return false;
+
+   pco_ref src = instr->src[0];
+   if (!pco_ref_is_reg(src))
+      return false;
+
+   /* Outside of compute, shared registers are never written by the shader. */
+   return instr->parent_func->parent_shader->stage != MESA_SHADER_COMPUTE &&
+          pco_ref_get_reg_class(src) == PCO_REG_CLASS_SHARED;
+}
+
+/**
+ * \brief Whether the other multiplied/added source is an immediate load,
+ *        which pco_shared_imms() would rather put in the shared register
+ *        slot.
+ */
+static inline bool other_src_is_imm(pco_instr **writes,
+                                    const pco_instr *instr,
+                                    unsigned src_index)
+{
+   if (src_index > 1)
+      return false;
+
+   pco_ref other = instr->src[!src_index];
+   if (!pco_ref_is_ssa(other) || !writes[other.val])
+      return false;
+
+   return writes[other.val]->op == PCO_OP_MOVI32;
+}
+
+static inline bool try_fwd_prop_instr(pco_instr **writes,
+                                      const BITSET_WORD *other_reads,
+                                      pco_instr *instr)
 {
    bool progress = false;
 
    pco_foreach_instr_src_ssa (psrc, instr) {
       pco_instr *parent_instr = writes[psrc->val];
 
-      if (!parent_instr || parent_instr->op != PCO_OP_MOV)
+      if (!parent_instr)
          continue;
+
+      /* Only fold shared register copies into instructions that read shared
+       * registers directly, or the copy comes back once per use.
+       */
+      if (parent_instr->op != PCO_OP_MOV) {
+         if (!is_read_only_copy(parent_instr))
+            continue;
+
+         if (instr->op == PCO_OP_COMP) {
+            if (BITSET_TEST(other_reads, instr->dest[0].val))
+               continue;
+         } else if (!pco_instr_reads_shared(instr) ||
+                    !pco_shared_src_fits(instr, psrc - instr->src) ||
+                    other_src_is_imm(writes, instr, psrc - instr->src)) {
+            continue;
+         }
+      }
 
       if (!can_fwd_prop_src(instr, psrc, &parent_instr->src[0]))
          continue;
@@ -459,12 +514,25 @@ static inline bool pco_opt_fwd_prop(pco_shader *shader)
    pco_foreach_func_in_shader (func, shader) {
       writes = rzalloc_array_size(NULL, sizeof(*writes), func->next_ssa);
 
+      /* SSA values read by something that can't read shared registers. */
+      BITSET_WORD *other_reads =
+         rzalloc_array_size(writes, sizeof(*other_reads),
+                            BITSET_WORDS(func->next_ssa));
+      pco_foreach_instr_in_func (instr, func) {
+         if (pco_instr_reads_shared(instr))
+            continue;
+
+         pco_foreach_instr_src_ssa (psrc, instr) {
+            BITSET_SET(other_reads, psrc->val);
+         }
+      }
+
       pco_foreach_instr_in_func (instr, func) {
          pco_foreach_instr_dest_ssa (pdest, instr) {
             writes[pdest->val] = instr;
          }
 
-         progress |= try_fwd_prop_instr(writes, instr);
+         progress |= try_fwd_prop_instr(writes, other_reads, instr);
       }
 
       ralloc_free(writes);
