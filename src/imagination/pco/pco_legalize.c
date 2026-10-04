@@ -93,11 +93,67 @@ static void insert_mov_ref(pco_instr *instr, pco_ref *ref, bool needs_s124)
  * \param[in] info PCO op info.
  * \return True if progress was made.
  */
+/**
+ * \brief Whether a reference's modifiers can be set on a given source.
+ */
+static bool src_takes_mods(const pco_instr *instr,
+                           unsigned src_index,
+                           pco_ref ref)
+{
+   return (!ref.oneminus || pco_instr_src_has_oneminus(instr, src_index)) &&
+          (!ref.clamp || pco_instr_src_has_clamp(instr, src_index)) &&
+          (!ref.flr || pco_instr_src_has_flr(instr, src_index)) &&
+          (!ref.abs || pco_instr_src_has_abs(instr, src_index)) &&
+          (!ref.neg || pco_instr_src_has_neg(instr, src_index)) &&
+          (!ref.elem || pco_instr_src_has_elem(instr, src_index));
+}
+
+/**
+ * \brief Swaps the first two sources of a commutative instruction when that
+ *        makes a register that can't be read from the second source port
+ *        legal, rather than copying it.
+ */
+static void try_commute_srcs(pco_instr *instr, const struct pco_op_info *info)
+{
+   switch (instr->op) {
+   case PCO_OP_FADD:
+   case PCO_OP_FMUL:
+   case PCO_OP_FMAD:
+   case PCO_OP_MIN:
+   case PCO_OP_MAX:
+      break;
+
+   default:
+      return;
+   }
+
+   if (!info->src_intrn_map[0] || !info->src_intrn_map[1])
+      return;
+
+   enum pco_io io0 = PCO_IO_S0 + info->src_intrn_map[0] - 1;
+   enum pco_io io1 = PCO_IO_S0 + info->src_intrn_map[1] - 1;
+   pco_ref src0 = instr->src[0];
+   pco_ref src1 = instr->src[1];
+
+   if (ref_src_map_valid(src1, io1, NULL) ||
+       !ref_src_map_valid(src1, io0, NULL) ||
+       !ref_src_map_valid(src0, io1, NULL))
+      return;
+
+   if (!src_takes_mods(instr, 0, src1) || !src_takes_mods(instr, 1, src0))
+      return;
+
+   instr->src[0] = src1;
+   instr->src[1] = src0;
+}
+
 static bool try_legalize_src_mappings(pco_instr *instr,
                                       const struct pco_op_info *info)
 {
    bool progress = false;
    bool needs_s124;
+
+   try_commute_srcs(instr, info);
 
    /* Check dests. */
    pco_foreach_instr_dest (pdest, instr) {
