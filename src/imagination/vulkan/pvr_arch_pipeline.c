@@ -2481,11 +2481,11 @@ static void pvr_alloc_cs_shmem(pco_data *data, nir_shader *nir)
       data->common.shareds += 2;
    } else {
       /* Reserve space in coefficients for use as shared memory. */
-      data->cs.shmem.start = data->common.coeffs;
-      data->common.coeffs += data->cs.shmem.count;
-
       /* DWORD granularity. */
       data->cs.shmem.count >>= 2;
+
+      data->cs.shmem.start = data->common.coeffs;
+      data->common.coeffs += data->cs.shmem.count;
    }
 }
 
