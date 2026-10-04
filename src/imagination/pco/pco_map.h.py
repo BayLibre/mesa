@@ -159,8 +159,7 @@ enum pco_igrp_hdr_variant pco_igrp_hdr_variant(pco_igrp *igrp)
 }
 
 static inline
-enum pco_src_variant pco_igrp_src_variant(const pco_igrp *igrp,
-                                          bool is_upper)
+int pco_igrp_src_variant_try(const pco_igrp *igrp, bool is_upper)
 {
    unsigned offset = is_upper ? ROGUE_ALU_INPUT_GROUP_SIZE : 0;
 
@@ -200,7 +199,18 @@ enum pco_src_variant pco_igrp_src_variant(const pco_igrp *igrp,
    }
 % endfor
 
-   UNREACHABLE("");
+   return -1;
+}
+
+static inline
+enum pco_src_variant pco_igrp_src_variant(const pco_igrp *igrp,
+                                          bool is_upper)
+{
+   int variant = pco_igrp_src_variant_try(igrp, is_upper);
+   if (variant < 0)
+      UNREACHABLE("");
+
+   return variant;
 }
 
 static inline
@@ -213,7 +223,7 @@ enum pco_iss_variant pco_igrp_iss_variant(const pco_igrp *igrp)
 }
 
 static inline
-enum pco_dst_variant pco_igrp_dest_variant(pco_igrp *igrp)
+int pco_igrp_dest_variant_try(const pco_igrp *igrp)
 {
    pco_ref w0 = igrp->dests.w[0];
    pco_ref w1 = igrp->dests.w[1];
@@ -253,7 +263,17 @@ enum pco_dst_variant pco_igrp_dest_variant(pco_igrp *igrp)
    }
 % endfor
 
-   UNREACHABLE("");
+   return -1;
+}
+
+static inline
+enum pco_dst_variant pco_igrp_dest_variant(const pco_igrp *igrp)
+{
+   int variant = pco_igrp_dest_variant_try(igrp);
+   if (variant < 0)
+      UNREACHABLE("");
+
+   return variant;
 }
 
 % for encode_map in encode_maps.values():
