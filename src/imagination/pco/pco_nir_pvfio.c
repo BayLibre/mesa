@@ -513,31 +513,60 @@ bool pco_nir_lower_sample_mask_out(nir_shader *shader)
    return true;
 }
 
+static bool shader_may_discard(nir_shader *shader)
+{
+   nir_foreach_function_impl (impl, shader) {
+      nir_foreach_block (block, impl) {
+         nir_foreach_instr (instr, block) {
+            if (instr->type != nir_instr_type_intrinsic)
+               continue;
+
+            switch (nir_instr_as_intrinsic(instr)->intrinsic) {
+            case nir_intrinsic_demote:
+            case nir_intrinsic_demote_if:
+            case nir_intrinsic_demote_samples:
+            case nir_intrinsic_terminate:
+            case nir_intrinsic_terminate_if:
+               return true;
+            default:
+               break;
+            }
+         }
+      }
+   }
+
+   return false;
+}
+
+static nir_def *load_frag_coord_z(nir_builder *b)
+{
+   nir_variable *var_pos = nir_get_variable_with_location(b->shader,
+                                                          nir_var_shader_in,
+                                                          VARYING_SLOT_POS,
+                                                          glsl_vec4_type());
+   var_pos->data.interpolation = INTERP_MODE_NOPERSPECTIVE;
+
+   return nir_load_input(b,
+                         1,
+                         32,
+                         nir_imm_int(b, 0),
+                         .component = 2,
+                         .dest_type = nir_type_float32,
+                         .io_semantics = (nir_io_semantics){
+                            .location = VARYING_SLOT_POS,
+                            .num_slots = 1,
+                         });
+}
+
 static bool lower_isp_fb(nir_builder *b, struct pfo_state *state)
 {
    nir_shader *shader = b->shader;
    if ((shader->info.writes_memory || state->fs->z_replicate != ~0u) &&
        !state->depth_feedback_src) {
-      nir_variable *var_pos = nir_get_variable_with_location(shader,
-                                                             nir_var_shader_in,
-                                                             VARYING_SLOT_POS,
-                                                             glsl_vec4_type());
-      var_pos->data.interpolation = INTERP_MODE_NOPERSPECTIVE;
-
       b->cursor = nir_before_block(
          nir_start_block(nir_shader_get_entrypoint(shader)));
 
-      state->depth_feedback_src =
-         nir_load_input(b,
-                        1,
-                        32,
-                        nir_imm_int(b, 0),
-                        .component = 2,
-                        .dest_type = nir_type_float32,
-                        .io_semantics = (nir_io_semantics){
-                           .location = VARYING_SLOT_POS,
-                           .num_slots = 1,
-                        });
+      state->depth_feedback_src = load_frag_coord_z(b);
    }
 
    /* Insert isp feedback instruction before the first store,
@@ -661,12 +690,18 @@ static bool z_replicate(nir_shader *shader, struct pfo_state *state)
                                      state->fs->z_replicate,
                                      glsl_float_type());
 
-   assert(state->depth_feedback_src);
-
    nir_builder b = nir_builder_at(
       nir_after_block(nir_impl_last_block(nir_shader_get_entrypoint(shader))));
+
+   /* Early fragment tests drop the depth feedback: the depth that was tested
+    * is the interpolated one.
+    */
+   nir_def *z = state->depth_feedback_src;
+   if (!z)
+      z = load_frag_coord_z(&b);
+
    nir_store_output(&b,
-                    state->depth_feedback_src,
+                    z,
                     nir_imm_int(&b, 0),
                     .write_mask = 1,
                     .src_type = nir_type_invalid | 32,
