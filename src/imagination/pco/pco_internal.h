@@ -72,6 +72,7 @@ enum pco_debug {
    PCO_DEBUG_NO_DMA_CACHE = BITFIELD64_BIT(8),
    PCO_DEBUG_NO_COISSUE = BITFIELD64_BIT(9),
    PCO_DEBUG_NO_SCHED = BITFIELD64_BIT(10),
+   PCO_DEBUG_NO_SCHED_CHECK = BITFIELD64_BIT(11),
 };
 
 extern uint64_t pco_debug;
@@ -386,6 +387,9 @@ typedef struct _pco_shader {
    bool is_internal; /** Whether this is an internal shader. */
    bool is_grouped; /** Whether the shader uses igrps. */
    bool is_legalized; /** Whether the shader has been legalized. */
+   bool no_sched; /** Whether pco_schedule_alu is skipped. */
+   bool sched_changed; /** Whether pco_schedule_alu reordered anything. */
+   bool quiet; /** Whether debug printing is suppressed. */
 
    struct list_head funcs; /** List of functions. */
    unsigned next_func; /** Next function index. */
@@ -1712,6 +1716,9 @@ static inline bool pco_should_print_nir(nir_shader *nir)
 
 static inline bool pco_should_print_shader(pco_shader *shader)
 {
+   if (shader->quiet)
+      return false;
+
    if (shader->is_internal && !PCO_DEBUG_PRINT(INTERNAL))
       return false;
 
@@ -1727,6 +1734,9 @@ static inline bool pco_should_print_shader(pco_shader *shader)
 
 static inline bool pco_should_print_shader_pass(pco_shader *shader)
 {
+   if (shader->quiet)
+      return false;
+
    if (!PCO_DEBUG_PRINT(PASSES))
       return false;
 

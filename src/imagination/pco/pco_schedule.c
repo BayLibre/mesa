@@ -629,11 +629,26 @@ static bool sched_region(struct sched_ctx *ctx,
  * \param[in,out] shader PCO shader.
  * \return True if the pass made progress.
  */
+#define PCO_SCHED_MAX_INSTRS 4096U
+
 bool pco_schedule_alu(pco_shader *shader)
 {
    bool progress = false;
 
-   if (PCO_DEBUG(NO_SCHED))
+   if (PCO_DEBUG(NO_SCHED) || shader->no_sched)
+      return false;
+
+   /* Skip very large shaders: the gain is small there, while scheduling
+    * means compiling them twice (see pco_compile_nir()).
+    */
+   unsigned num_instrs = 0;
+   pco_foreach_func_in_shader (func, shader) {
+      pco_foreach_instr_in_func (instr, func) {
+         ++num_instrs;
+      }
+   }
+
+   if (num_instrs > PCO_SCHED_MAX_INSTRS)
       return false;
 
    pco_foreach_func_in_shader (func, shader) {
@@ -699,5 +714,6 @@ bool pco_schedule_alu(pco_shader *shader)
       ralloc_free(mem_ctx);
    }
 
+   shader->sched_changed |= progress;
    return progress;
 }

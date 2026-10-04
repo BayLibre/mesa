@@ -1067,14 +1067,11 @@ static VkResult pvr_compute_pipeline_compile(
    pco_postprocess_nir(pco_ctx, nir, &shader_data);
    pvr_postprocess_shader_data(&shader_data, nir, pCreateInfo, layout, NULL);
 
-   cs = pco_trans_nir(pco_ctx, nir, &shader_data, shader_mem_ctx);
+   cs = pco_compile_nir(pco_ctx, nir, &shader_data, shader_mem_ctx);
    if (!cs) {
       result = VK_ERROR_INITIALIZATION_FAILED;
       goto err_free_build_context;
    }
-
-   pco_process_ir(pco_ctx, cs);
-   pco_encode_ir(pco_ctx, cs);
 
    pvr_compute_state_save(compute_pipeline, cs);
 
@@ -3153,17 +3150,14 @@ pvr_graphics_pipeline_compile(struct pvr_device *const device,
       if (!nir_shaders[stage])
          continue;
 
-      *pco = pco_trans_nir(pco_ctx,
-                           nir_shaders[stage],
-                           &shader_data[stage],
-                           shader_mem_ctx);
+      *pco = pco_compile_nir(pco_ctx,
+                             nir_shaders[stage],
+                             &shader_data[stage],
+                             shader_mem_ctx);
       if (!*pco) {
          result = VK_ERROR_INITIALIZATION_FAILED;
          goto err_free_build_context;
       }
-
-      pco_process_ir(pco_ctx, *pco);
-      pco_encode_ir(pco_ctx, *pco);
    }
 
    pvr_vertex_state_save(gfx_pipeline, *vs);
