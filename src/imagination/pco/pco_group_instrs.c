@@ -194,19 +194,33 @@ static bool coissue_op(enum pco_op op)
    return false;
 }
 
+/**
+ * \brief Returns whether a phase 0 op can share its igrp with a phase 1 op.
+ *
+ * Besides the ops that also exist in phase 1, the 32-bit integer multiply-add
+ * (without carry-in) and unpack can be issued alongside a phase 1 op.
+ */
+static bool coissue_host_instr(const pco_instr *instr)
+{
+   if (coissue_op(instr->op) || instr->op == PCO_OP_UNPCK)
+      return true;
+
+   return instr->op == PCO_OP_IMADD32 && pco_ref_is_null(instr->src[3]);
+}
+
 static bool ref_is_io(pco_ref ref, enum pco_io io)
 {
    return pco_ref_is_io(ref) && pco_ref_get_io(ref) == io;
 }
 
 /**
- * \brief Returns whether an igrp is a lone phase 0 op that can either host a
- *        phase 1 op or be moved into phase 1 of another igrp.
+ * \brief Returns whether an igrp is a lone phase 0 op that can host a phase
+ *        1 op (host) or be moved into phase 1 of another igrp (!host).
  *
  * Such an igrp only reads S0..S2, routes FT0 to W0 through IS4 and writes a
  * single temp register.
  */
-static bool igrp_is_coissue_candidate(const pco_igrp *igrp)
+static bool igrp_is_coissue_candidate(const pco_igrp *igrp, bool host)
 {
    if (igrp->hdr.alutype != PCO_ALUTYPE_MAIN ||
        igrp->hdr.oporg != PCO_OPORG_P0)
@@ -222,7 +236,7 @@ static bool igrp_is_coissue_candidate(const pco_igrp *igrp)
    }
 
    pco_instr *instr = igrp->instrs[PCO_OP_PHASE_0];
-   if (!instr || !coissue_op(instr->op))
+   if (!instr || !(host ? coissue_host_instr(instr) : coissue_op(instr->op)))
       return false;
 
    for (unsigned u = ROGUE_ALU_INPUT_GROUP_SIZE; u < ROGUE_MAX_ALU_INPUTS; ++u) {
@@ -483,7 +497,7 @@ static void coissue_block(pco_block *block)
       if (prev && prev->hdr.alutype == PCO_ALUTYPE_CONTROL)
          continue;
 
-      if (!igrp_is_coissue_candidate(a))
+      if (!igrp_is_coissue_candidate(a, true))
          continue;
 
       unsigned window = a->hdr.cc == PCO_CC_E1_ZX ? COISSUE_WINDOW : 1;
@@ -498,7 +512,7 @@ static void coissue_block(pco_block *block)
          if (i != a && igrp_is_barrier(i))
             break;
 
-         if (!igrp_is_coissue_candidate(b))
+         if (!igrp_is_coissue_candidate(b, false))
             continue;
 
          bool fwd = igrp_is_fwd_mov(a, b);
