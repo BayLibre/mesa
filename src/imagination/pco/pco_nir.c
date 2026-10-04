@@ -1058,7 +1058,7 @@ void pco_lower_nir(pco_ctx *ctx, nir_shader *nir, pco_data *data)
                PVR_POINT_SIZE_RANGE_MIN,
                PVR_POINT_SIZE_RANGE_MAX);
 
-      if (!internal)
+      if (!internal && !data->vs.no_point_size)
          NIR_PASS(_, nir, pco_nir_point_size);
 
       NIR_PASS(_, nir, pco_nir_pvi, &data->vs);

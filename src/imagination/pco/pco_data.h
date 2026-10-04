@@ -58,6 +58,8 @@ typedef struct _pco_vs_data {
    unsigned f16_npc; /** Number of F16 NPC varyings. */
 
    unsigned vtxouts; /** How many vertex outputs are written to. */
+
+   bool no_point_size; /** The pipeline never rasterizes points. */
 } pco_vs_data;
 
 enum pco_front_face_op {

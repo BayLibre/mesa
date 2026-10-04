@@ -2839,6 +2839,21 @@ static void pvr_early_init_shader_data(pco_data *data,
          }
       }
 
+      /* Without dynamicPrimitiveTopologyUnrestricted or point polygon mode,
+       * only a point list topology rasterizes points, so other pipelines
+       * don't need the point size output that costs a UVS dword per vertex.
+       * Keep it when the shader writes no position: the hardware misbehaves
+       * with a vertex that has no outputs at all.
+       */
+      if (nir->info.stage == MESA_SHADER_VERTEX) {
+         const VkPipelineInputAssemblyStateCreateInfo *ia =
+            pGraphicsCreateInfo->pInputAssemblyState;
+
+         data->vs.no_point_size =
+            ia && ia->topology != VK_PRIMITIVE_TOPOLOGY_POINT_LIST &&
+            (nir->info.outputs_written & BITFIELD64_BIT(VARYING_SLOT_POS));
+      }
+
       break;
    }
 
