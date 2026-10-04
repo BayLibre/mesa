@@ -789,6 +789,16 @@ void pco_preprocess_nir(pco_ctx *ctx, nir_shader *nir, pco_data *data)
 
    NIR_PASS(_, nir, nir_lower_global_vars_to_local);
    NIR_PASS(_, nir, nir_split_var_copies);
+
+   /* Forward array copies, such as array function arguments, while they are
+    * still copy_derefs: once lowered, every element would be loaded where the
+    * copy was and stay live until its use far below.
+    */
+   NIR_PASS(_, nir, nir_opt_find_array_copies);
+   NIR_PASS(_, nir, nir_opt_copy_prop_vars);
+   NIR_PASS(_, nir, nir_opt_dead_write_vars);
+   NIR_PASS(_, nir, nir_remove_dead_variables, nir_var_function_temp, NULL);
+
    NIR_PASS(_, nir, nir_lower_var_copies);
    NIR_PASS(_, nir, nir_split_per_member_structs);
    NIR_PASS(_,
