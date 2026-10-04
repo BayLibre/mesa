@@ -63,6 +63,12 @@ struct vec_override {
 /* Temps holding spilled values reloaded for one instruction. */
 #define PCO_RA_SPILL_DATA_REGS 4
 
+/* Candidates spilled per round when the allocator offers some. */
+#define PCO_RA_SPILLS_PER_ROUND 8
+
+/* Values spilled per round when the allocator offers no candidate. */
+#define PCO_RA_FALLBACK_SPILLS 32
+
 enum pco_ra_ctx_state {
    PCO_RA_CTX_STATE_OPTIMAL,
    PCO_RA_CTX_STATE_MAXIMUM,
@@ -925,12 +931,69 @@ static bool pco_ra_func(pco_func *func, pco_ra_ctx *ctx)
          ra_set_node_spill_cost(ra_graph, u, (float)uses[u]);
 
       unsigned spill_index = ra_get_best_spill_node(ra_graph);
+
+      /* The allocator only offers the nodes it managed to colour, which can
+       * all be vectors when it fails early. Fall back to the scalar living
+       * the longest that isn't coalesced into a vector.
+       */
+      if (spill_index == ~0) {
+         BITSET_WORD *coalesced =
+            rzalloc_array_size(ra_regs, sizeof(*coalesced),
+                               BITSET_WORDS(num_ssas));
+         hash_table_u64_foreach (overrides, entry) {
+            const struct vec_override *override = entry.data;
+            BITSET_SET(coalesced, entry.key);
+            BITSET_SET(coalesced, override->ref.val);
+         }
+
+         /* Spill several at once: rebuilding the interference graph
+          * dominates the cost of each round on large shaders.
+          */
+         for (unsigned n = 0; n < PCO_RA_FALLBACK_SPILLS; ++n) {
+            unsigned longest = 0;
+            unsigned pick = ~0U;
+
+            for (unsigned u = 0; u < num_ssas; ++u) {
+               if (!uses[u] || BITSET_TEST(coalesced, u) ||
+                   live_ranges[u].start == ~0U)
+                  continue;
+
+               unsigned length = live_ranges[u].end - live_ranges[u].start;
+               if (length > longest) {
+                  longest = length;
+                  pick = u;
+               }
+            }
+
+            if (pick == ~0U)
+               break;
+
+            spill(pick, func, ctx);
+            BITSET_SET(coalesced, pick);
+            spill_index = pick;
+         }
+
+         if (spill_index != ~0) {
+            pco_index(func->parent_shader, false);
+            ralloc_free(ra_regs);
+            return false;
+         }
+      }
+
       if (spill_index == ~0) {
          fprintf(stderr, "FATAL: Failed to get best spill node.\n");
          abort();
       }
 
-      spill(spill_index, func, ctx);
+      /* Take a few of the best candidates per round: each round rebuilds the
+       * interference graph, which is slow on large shaders.
+       */
+      for (unsigned n = 0; n < PCO_RA_SPILLS_PER_ROUND && spill_index != ~0;
+           ++n) {
+         spill(spill_index, func, ctx);
+         ra_set_node_spill_cost(ra_graph, spill_index, -1.0f);
+         spill_index = ra_get_best_spill_node(ra_graph);
+      }
       pco_index(func->parent_shader, false);
 
       ralloc_free(ra_regs);
