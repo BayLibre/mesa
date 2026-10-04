@@ -82,6 +82,14 @@ bool pco_nir_lower_barriers(nir_shader *shader, pco_data *data)
 
    data->common.uses.barriers |= progress;
 
+   /*
+    * The barrier counters, allocated above everything declared so far, are
+    * what needs zeroing: there is no zero-initialized workgroup memory
+    * otherwise.
+    */
+   if (shader->info.stage == MESA_SHADER_COMPUTE)
+      data->cs.zero_shmem_size = shader->info.shared_size;
+
    return progress;
 }
 

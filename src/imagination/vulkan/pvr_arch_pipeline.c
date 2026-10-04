@@ -1109,7 +1109,8 @@ static VkResult pvr_compute_pipeline_compile(
    if (compute_pipeline->cs_data.cs.zero_shmem &&
        !compute_pipeline->cs_data.cs.global_shmem) {
       uint32_t start = compute_pipeline->cs_data.cs.shmem.start;
-      uint32_t count = compute_pipeline->cs_data.cs.shmem.count;
+      uint32_t count =
+         DIV_ROUND_UP(compute_pipeline->cs_data.cs.zero_shmem_size, 4);
       pco_shader *zero_init_shader =
          pvr_usc_zero_init_wg_mem(pco_ctx, start, count);
 

@@ -140,6 +140,7 @@ typedef struct _pco_cs_data {
 
    pco_range shmem;
    bool zero_shmem;
+   unsigned zero_shmem_size; /** Bytes to zero from the start of shmem. */
    bool global_shmem;
 } pco_cs_data;
 
