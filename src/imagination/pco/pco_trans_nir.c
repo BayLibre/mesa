@@ -3757,12 +3757,60 @@ trans_conv(trans_ctx *tctx, nir_op op, pco_ref dest, pco_ref src)
  * \param[in] alu The nir alu instruction.
  * \return The PCO instruction.
  */
+/**
+ * \brief Returns how many leading components of a vec are read, if it only
+ * feeds the data source of sample instructions.
+ *
+ * \param[in] def The vec def.
+ * \return The number of components read, or 0 if unknown.
+ */
+static unsigned smp_data_comps_used(nir_def *def)
+{
+   unsigned used = 0;
+
+   nir_foreach_use_including_if (use, def) {
+      if (nir_src_is_if(use) ||
+          nir_src_use_instr(use)->type != nir_instr_type_intrinsic)
+         return 0;
+
+      nir_intrinsic_instr *intr =
+         nir_instr_as_intrinsic(nir_src_use_instr(use));
+      switch (intr->intrinsic) {
+      case nir_intrinsic_smp_pco:
+      case nir_intrinsic_smp_coeffs_pco:
+      case nir_intrinsic_smp_raw_pco:
+      case nir_intrinsic_smp_write_pco:
+         break;
+      default:
+         return 0;
+      }
+
+      if (use != &intr->src[0])
+         return 0;
+
+      used = MAX2(used, nir_intrinsic_range(intr));
+   }
+
+   return used;
+}
+
 static pco_instr *trans_alu(trans_ctx *tctx, nir_alu_instr *alu)
 {
    const nir_op_info *info = &nir_op_infos[alu->op];
    unsigned num_srcs = info->num_inputs;
 
    pco_ref dest = pco_ref_nir_def_t(&alu->def, tctx);
+
+   /* Sample data vectors are padded to their maximum size, but the sample
+    * only reads its range: don't build the padding.
+    */
+   if (nir_op_is_vec(alu->op)) {
+      unsigned used = smp_data_comps_used(&alu->def);
+      if (used > 1 && used < num_srcs) {
+         num_srcs = used;
+         dest = pco_ref_chans(dest, used);
+      }
+   }
 
    pco_ref src[NIR_MAX_VEC_COMPONENTS] = { 0 };
    for (unsigned s = 0; s < num_srcs; ++s)
