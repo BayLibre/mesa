@@ -1999,8 +1999,11 @@ static VkResult pvr_sub_cmd_gfx_job_init(const struct pvr_device_info *dev_info,
       job->run_frag = true;
    }
 
-   /* TODO: Enable pixel merging when it's safe to do. */
-   job->disable_pixel_merging = true;
+   /* Merged pixels share coverage across primitives, which breaks per-sample
+    * effects such as centroid interpolation.
+    */
+   job->disable_pixel_merging = sub_cmd->disable_pixel_merging ||
+                                job->samples > 1;
 
    return VK_SUCCESS;
 }
@@ -8489,6 +8492,7 @@ static VkResult pvr_validate_draw_state(struct pvr_cmd_buffer *cmd_buffer)
 
    sub_cmd->frag_uses_atomic_ops |= fs_data->common.uses.atomics;
    sub_cmd->frag_has_side_effects |= fs_data->common.uses.side_effects;
+   sub_cmd->disable_pixel_merging |= fs_data->fs.uses.dyn_tex_index;
    sub_cmd->frag_uses_texture_rw |= false;
    sub_cmd->vertex_uses_texture_rw |= false;
 
@@ -9421,6 +9425,8 @@ pvr_execute_graphics_cmd_buffer(struct pvr_cmd_buffer *cmd_buffer,
          sec_sub_cmd->gfx.job.get_vis_results;
       primary_sub_cmd->gfx.view_index_wanted |=
          sec_sub_cmd->gfx.view_index_wanted;
+      primary_sub_cmd->gfx.disable_pixel_merging |=
+         sec_sub_cmd->gfx.disable_pixel_merging;
 
       primary_sub_cmd->gfx.max_tiles_in_flight =
          MIN2(primary_sub_cmd->gfx.max_tiles_in_flight,

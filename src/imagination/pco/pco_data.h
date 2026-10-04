@@ -122,6 +122,7 @@ typedef struct _pco_fs_data {
       bool sample_locations;
       bool alpha_to_coverage;
       bool olchk_skip;
+      bool dyn_tex_index; /** Whether a texture descriptor index is dynamic. */
    } uses;
 
    struct {

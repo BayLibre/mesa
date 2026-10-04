@@ -497,6 +497,11 @@ static bool lower_tex(nir_builder *b, nir_tex_instr *tex, void *cb_data)
       BITSET_CLEAR(tex_src_set, nir_tex_src_backend2);
    }
 
+   if (b->shader->info.stage == MESA_SHADER_FRAGMENT &&
+       (!nir_def_is_const(tex_elem) || !nir_def_is_const(smp_elem))) {
+      data->fs.uses.dyn_tex_index = true;
+   }
+
    nir_def *tex_state = nir_load_tex_state_pco(b,
                                                ROGUE_NUM_TEXSTATE_DWORDS,
                                                tex_elem,

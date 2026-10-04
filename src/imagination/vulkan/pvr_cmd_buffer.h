@@ -201,6 +201,11 @@ struct pvr_sub_cmd_gfx {
     */
    bool frag_has_side_effects;
 
+   /* True if any fragment shader used in this sub command samples a texture
+    * with a dynamically indexed descriptor, which pixel merging breaks.
+    */
+   bool disable_pixel_merging;
+
    /* True if any vertex shader used in this sub command contains both
     * texture reads and texture writes.
     */
