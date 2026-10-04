@@ -37,6 +37,23 @@ struct live_range {
    unsigned end;
 };
 
+struct sorted_range {
+   unsigned start;
+   unsigned end;
+   unsigned var;
+};
+
+static int cmp_range_start(const void *a, const void *b)
+{
+   const struct sorted_range *ra = a;
+   const struct sorted_range *rb = b;
+
+   if (ra->start != rb->start)
+      return ra->start < rb->start ? -1 : 1;
+
+   return ra->var < rb->var ? -1 : ra->var > rb->var;
+}
+
 /** Vector override information. */
 struct vec_override {
    pco_ref ref;
@@ -783,15 +800,33 @@ static bool pco_ra_func(pco_func *func, pco_ra_ctx *ctx)
       if (live_ranges[var].start != ~0U && live_ranges[var].end == 0)
          live_ranges[var].end = live_ranges[var].start;
 
-   /* Build interference graph from overlapping live ranges. */
-   for (unsigned var0 = 0; var0 < num_vars; ++var0) {
-      for (unsigned var1 = var0 + 1; var1 < num_vars; ++var1) {
+   /* Build interference graph from overlapping live ranges. Sweep the ranges
+    * by start so only pairs that can overlap are visited: comparing every
+    * pair dominates compile time on shaders with tens of thousands of values.
+    */
+   struct sorted_range *ranges =
+      ralloc_array(ra_regs, struct sorted_range, num_vars);
+   unsigned range_count = 0;
+   for (unsigned var = 0; var < num_vars; ++var) {
+      if (live_ranges[var].start == ~0U)
+         continue;
+
+      ranges[range_count++] = (struct sorted_range){
+         .start = live_ranges[var].start,
+         .end = live_ranges[var].end,
+         .var = var,
+      };
+   }
+
+   qsort(ranges, range_count, sizeof(*ranges), cmp_range_start);
+
+   for (unsigned i = 0; i < range_count; ++i) {
+      for (unsigned j = i + 1;
+           j < range_count && ranges[j].start < ranges[i].end;
+           ++j) {
          /* If the live ranges overlap, the register nodes interfere. */
-         if ((live_ranges[var0].start != ~0U && live_ranges[var1].end != ~0U) &&
-             !(live_ranges[var0].start >= live_ranges[var1].end ||
-               live_ranges[var1].start >= live_ranges[var0].end)) {
-            ra_add_node_interference(ra_graph, var0, var1);
-         }
+         if (ranges[i].start < ranges[j].end)
+            ra_add_node_interference(ra_graph, ranges[i].var, ranges[j].var);
       }
    }
 
