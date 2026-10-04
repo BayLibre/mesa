@@ -433,6 +433,10 @@ struct pvr_push_constants {
 struct pvr_cmd_buffer_state {
    /* Pipeline binding. */
    const struct pvr_graphics_pipeline *gfx_pipeline;
+   /* The pipeline bound by the application: gfx_pipeline may be its
+    * feedback_variant while an occlusion query is active.
+    */
+   const struct pvr_graphics_pipeline *bound_gfx_pipeline;
 
    const struct pvr_compute_pipeline *compute_pipeline;
 

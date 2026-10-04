@@ -123,6 +123,7 @@ typedef struct _pco_fs_data {
       bool alpha_to_coverage;
       bool olchk_skip;
       bool dyn_tex_index; /** Whether a texture descriptor index is dynamic. */
+      bool discard_masked; /** Discards mask outputs instead of ISP feedback. */
    } uses;
 
    struct {
@@ -133,6 +134,11 @@ typedef struct _pco_fs_data {
     * covered sample: no alpha to coverage/one and sample 0 in the mask.
     */
    bool trivial_ms;
+
+   /** Discards need no ISP feedback: no depth/stencil writes or tests that a
+    * discarded fragment could affect, so the draw can be translucent.
+    */
+   bool discard_no_feedback;
 } pco_fs_data;
 
 /** PCO compute shader-specific data. */

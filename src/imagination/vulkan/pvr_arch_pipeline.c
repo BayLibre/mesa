@@ -1340,6 +1340,12 @@ pvr_graphics_pipeline_destroy(struct pvr_device *const device,
    ralloc_free((void *)gfx_pipeline->vs_nir_str);
    ralloc_free((void *)gfx_pipeline->fs_nir_str);
 
+   if (gfx_pipeline->feedback_variant) {
+      pvr_graphics_pipeline_destroy(device,
+                                    allocator,
+                                    gfx_pipeline->feedback_variant);
+   }
+
    vk_free2(&device->vk.alloc, allocator, gfx_pipeline);
 }
 
@@ -2793,6 +2799,21 @@ pvr_preprocess_shader_data(pco_data *data,
          (state->ms->sample_mask & 1) && !state->ms->alpha_to_coverage_enable &&
          !state->ms->alpha_to_one_enable && !nir->info.fs.uses_sample_shading;
 
+      const bool depth_write =
+         !state->ds ||
+         BITSET_TEST(state->dynamic, MESA_VK_DYNAMIC_DS_DEPTH_WRITE_ENABLE) ||
+         state->ds->depth.write_enable;
+
+      /* Without depth writes the replicated depth keeps its value. */
+      if (!depth_write)
+         data->fs.z_replicate = ~0u;
+
+      data->fs.discard_no_feedback =
+         data->fs.trivial_ms && !depth_write &&
+         !BITSET_TEST(state->dynamic, MESA_VK_DYNAMIC_DS_STENCIL_TEST_ENABLE) &&
+         !state->ds->stencil.test_enable && !nir->info.writes_memory &&
+         !nir->info.fs.early_fragment_tests;
+
       /* TODO: push consts, dynamic state, etc. */
       break;
    }
@@ -3098,6 +3119,9 @@ pvr_graphics_pipeline_compile(struct pvr_device *const device,
                                  layout,
                                  state,
                                  &mrt_setup);
+
+      if (stage == MESA_SHADER_FRAGMENT && gfx_pipeline->keep_discard_feedback)
+         shader_data[stage].fs.discard_no_feedback = false;
 
       const struct lower_ycbcr_state ycbcr_state = {
          .set_layout_count = layout->set_count,
@@ -3514,6 +3538,33 @@ pvr_graphics_pipeline_create(struct pvr_device *device,
    if (result != VK_SUCCESS) {
       vk_free2(&device->vk.alloc, allocator, gfx_pipeline);
       return result;
+   }
+
+   if (gfx_pipeline->fs_data.fs.uses.discard_masked) {
+      struct pvr_graphics_pipeline *variant =
+         vk_zalloc2(&device->vk.alloc,
+                    allocator,
+                    sizeof(*variant),
+                    8,
+                    VK_SYSTEM_ALLOCATION_SCOPE_DEVICE);
+      if (!variant) {
+         pvr_graphics_pipeline_destroy(device, allocator, gfx_pipeline);
+         return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
+      }
+
+      variant->keep_discard_feedback = true;
+      result = pvr_graphics_pipeline_init(device,
+                                          cache,
+                                          pCreateInfo,
+                                          allocator,
+                                          variant);
+      if (result != VK_SUCCESS) {
+         vk_free2(&device->vk.alloc, allocator, variant);
+         pvr_graphics_pipeline_destroy(device, allocator, gfx_pipeline);
+         return result;
+      }
+
+      gfx_pipeline->feedback_variant = variant;
    }
 
    *pipeline_out = pvr_pipeline_to_handle(&gfx_pipeline->base);

@@ -2845,11 +2845,24 @@ static void pvr_cmd_bind_compute_pipeline(
    cmd_buffer->state.dirty.compute_pipeline_binding = true;
 }
 
+static const struct pvr_graphics_pipeline *
+pvr_select_gfx_pipeline(const struct pvr_cmd_buffer_state *state)
+{
+   const struct pvr_graphics_pipeline *pipeline = state->bound_gfx_pipeline;
+
+   if (pipeline && pipeline->feedback_variant && state->vis_test_enabled)
+      return pipeline->feedback_variant;
+
+   return pipeline;
+}
+
 static void pvr_cmd_bind_graphics_pipeline(
    const struct pvr_graphics_pipeline *const gfx_pipeline,
    struct pvr_cmd_buffer *const cmd_buffer)
 {
-   cmd_buffer->state.gfx_pipeline = gfx_pipeline;
+   cmd_buffer->state.bound_gfx_pipeline = gfx_pipeline;
+   cmd_buffer->state.gfx_pipeline =
+      pvr_select_gfx_pipeline(&cmd_buffer->state);
    cmd_buffer->state.dirty.gfx_pipeline_binding = true;
 
    vk_cmd_set_dynamic_graphics_state(&cmd_buffer->vk,
@@ -9699,6 +9712,7 @@ void PVR_PER_ARCH(CmdNextSubpass2)(VkCommandBuffer commandBuffer,
     * subpass.
     */
    state->gfx_pipeline = NULL;
+   state->bound_gfx_pipeline = NULL;
 
    /* User-pass spawn is 4 bits so if the driver has to wrap it, it will emit a
     * full screen transparent object to flush all tags up until now, then the

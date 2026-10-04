@@ -140,6 +140,12 @@ struct pvr_graphics_pipeline {
 
    const char *vs_nir_str;
    const char *fs_nir_str;
+
+   /* The same pipeline with discards using ISP feedback, for draws whose
+    * fragments are counted by an occlusion query.
+    */
+   struct pvr_graphics_pipeline *feedback_variant;
+   bool keep_discard_feedback;
 };
 
 struct pvr_private_compute_pipeline {

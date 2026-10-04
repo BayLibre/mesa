@@ -9,6 +9,7 @@
 #include "pvr_hw_pass.h"
 #include "pvr_macros.h"
 #include "pvr_pass.h"
+#include "pvr_pipeline.h"
 #include "pvr_query.h"
 
 void PVR_PER_ARCH(CmdResetQueryPool)(VkCommandBuffer commandBuffer,
@@ -211,6 +212,15 @@ void PVR_PER_ARCH(CmdBeginQuery)(VkCommandBuffer commandBuffer,
    state->vis_reg = query;
    state->dirty.vis_test = true;
 
+   /* Counted fragments need the variant whose discards use ISP feedback. */
+   if (state->bound_gfx_pipeline &&
+       state->bound_gfx_pipeline->feedback_variant) {
+      state->gfx_pipeline = state->vis_test_enabled
+                               ? state->bound_gfx_pipeline->feedback_variant
+                               : state->bound_gfx_pipeline;
+      state->dirty.gfx_pipeline_binding = true;
+   }
+
    /* Add the index to the list for this render. */
    for (uint32_t i = 0; i < view_count; i++) {
       util_dynarray_append(&state->query_indices, query);
@@ -228,4 +238,13 @@ void PVR_PER_ARCH(CmdEndQuery)(VkCommandBuffer commandBuffer,
 
    state->vis_test_enabled = false;
    state->dirty.vis_test = true;
+
+   /* Counted fragments need the variant whose discards use ISP feedback. */
+   if (state->bound_gfx_pipeline &&
+       state->bound_gfx_pipeline->feedback_variant) {
+      state->gfx_pipeline = state->vis_test_enabled
+                               ? state->bound_gfx_pipeline->feedback_variant
+                               : state->bound_gfx_pipeline;
+      state->dirty.gfx_pipeline_binding = true;
+   }
 }

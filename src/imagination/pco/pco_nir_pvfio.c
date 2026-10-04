@@ -34,6 +34,9 @@ struct pfo_state {
    /* Src for depth feedback (NULL if unused). */
    nir_def *depth_feedback_src;
 
+   /* Discarded fragments keep the previous output values (no ISP feedback). */
+   bool mask_discarded_stores;
+
    pco_fs_data *fs; /** Fragment-specific data. */
 };
 
@@ -582,6 +585,57 @@ static bool writes_all_outputs(nir_shader *shader, const pco_fs_data *fs)
    return true;
 }
 
+/* Without ISP feedback a mapped output the shader leaves unwritten would be
+ * emitted from stale output registers: write its previous value back.
+ */
+static void store_unwritten_outputs(nir_builder *b, struct pfo_state *state)
+{
+   nir_shader *shader = b->shader;
+   b->cursor =
+      nir_after_block(nir_impl_last_block(nir_shader_get_entrypoint(shader)));
+
+   for (unsigned u = 0; u < 8; ++u) {
+      gl_frag_result location = FRAG_RESULT_DATA0 + u;
+      enum pipe_format format = state->fs->output_formats[location];
+
+      if (format == PIPE_FORMAT_NONE ||
+          (shader->info.outputs_written & BITFIELD64_BIT(location))) {
+         continue;
+      }
+
+      format = to_pbe_format(b, format, NULL);
+      unsigned dwords = DIV_ROUND_UP(util_format_get_blocksizebits(format), 32);
+
+      nir_variable *var = nir_variable_create(shader,
+                                              nir_var_shader_out,
+                                              glsl_uvec_type(dwords),
+                                              "unwritten_output");
+      var->data.location = location;
+
+      nir_def *zero = nir_imm_int(b, 0);
+      nir_def *prev =
+         nir_load_output(b,
+                         dwords,
+                         32,
+                         zero,
+                         .dest_type = nir_type_invalid | 32,
+                         .io_semantics = { .location = location,
+                                           .num_slots = 1,
+                                           .fb_fetch_output = true });
+
+      nir_store_output(b,
+                       prev,
+                       zero,
+                       .write_mask = BITFIELD_MASK(dwords),
+                       .src_type = nir_type_invalid | 32,
+                       .io_semantics = { .location = location,
+                                         .num_slots = 1 });
+
+      shader->info.outputs_written |= BITFIELD64_BIT(location);
+      shader->info.outputs_read |= BITFIELD64_BIT(location);
+   }
+}
+
 static bool lower_isp_fb(nir_builder *b, struct pfo_state *state)
 {
    nir_shader *shader = b->shader;
@@ -617,6 +671,22 @@ static bool lower_isp_fb(nir_builder *b, struct pfo_state *state)
    if (shader->info.fs.early_fragment_tests) {
       state->depth_feedback_src = NULL;
       discard_cond = NULL;
+      state->mask_discarded_stores = true;
+   } else if (discard_cond && state->fs->discard_no_feedback &&
+              !state->depth_feedback_src) {
+      /* The masked stores keep the previous colours of discarded fragments,
+       * so every output needs one.
+       */
+      if (!writes_all_outputs(shader, state->fs)) {
+         nir_cursor cursor = b->cursor;
+         store_unwritten_outputs(b, state);
+         b->cursor = cursor;
+      }
+
+      discard_cond = NULL;
+      state->mask_discarded_stores = true;
+      state->fs->uses.fbfetch = true;
+      state->fs->uses.discard_masked = true;
    } else if (state->depth_feedback_src) {
       /* Clamp depth to [0..1] */
       state->depth_feedback_src = nir_fsat(b, state->depth_feedback_src);
@@ -676,9 +746,8 @@ static bool handle_early_frag(nir_shader *shader, struct pfo_state *state)
    b.cursor = nir_before_instr(
       &(*(nir_intrinsic_instr **)util_dynarray_begin(&state->stores))->instr);
 
-   /* TODO: should this actually be emitted before every store rather than just
-    * after the first one? is_helper_invocation result is position-dependent (on
-    * discards)!
+   /* The stores have been sunk to the end of the shader, after every
+    * discard, so one helper state covers all of them.
     */
    nir_def *is_helper = nir_is_helper_invocation(&b, 1);
 
@@ -903,10 +972,13 @@ bool pco_nir_pfo(nir_shader *shader, pco_fs_data *fs)
    if (!shader->info.internal)
       progress |= lower_isp_fb(&b, &state);
 
-   if (shader->info.fs.early_fragment_tests)
-      progress |= handle_early_frag(shader, &state);
-
+   /* Sink the stores first, so that the helper state that masks them is read
+    * after every discard.
+    */
    progress |= sink_outputs(shader, &state);
+
+   if (state.mask_discarded_stores)
+      progress |= handle_early_frag(shader, &state);
 
    if (!shader->info.internal)
       progress |= z_replicate(shader, &state);
