@@ -1841,6 +1841,7 @@ bool pco_nir_pvi(nir_shader *shader, pco_vs_data *vs);
 bool pco_opt(pco_shader *shader);
 bool pco_ra(pco_shader *shader);
 bool pco_schedule(pco_shader *shader);
+bool pco_reuse_imms(pco_shader *shader);
 bool pco_shrink_vecs(pco_shader *shader);
 
 typedef enum {
