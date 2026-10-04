@@ -498,11 +498,17 @@ static bool lower_sample_mask_out(nir_builder *b, nir_intrinsic_instr *intr, UNU
    return true;
 }
 
-bool pco_nir_lower_sample_mask_out(nir_shader *shader)
+bool pco_nir_lower_sample_mask_out(nir_shader *shader, bool trivial_ms)
 {
    bool progress = nir_shader_intrinsics_pass(shader, lower_sample_mask_out, nir_metadata_control_flow, NULL);
    if (progress)
       return true;
+
+   /* The check would always pass, and it would turn every draw into a
+    * punch-through one.
+    */
+   if (trivial_ms)
+      return false;
 
    /* If the sample check isn't present, then add one ourselves. */
    nir_builder b = nir_builder_at(
@@ -558,6 +564,24 @@ static nir_def *load_frag_coord_z(nir_builder *b)
                          });
 }
 
+/* Whether the shader writes every colour output an attachment is mapped to.
+ * Without ISP feedback the draw is opaque, and an attachment the shader leaves
+ * unwritten then gets the output registers' stale contents instead of keeping
+ * its value.
+ */
+static bool writes_all_outputs(nir_shader *shader, const pco_fs_data *fs)
+{
+   for (unsigned u = 0; u < 8; ++u) {
+      gl_frag_result location = FRAG_RESULT_DATA0 + u;
+
+      if (fs->output_formats[location] != PIPE_FORMAT_NONE &&
+          !(shader->info.outputs_written & BITFIELD64_BIT(location)))
+         return false;
+   }
+
+   return true;
+}
+
 static bool lower_isp_fb(nir_builder *b, struct pfo_state *state)
 {
    nir_shader *shader = b->shader;
@@ -581,7 +605,13 @@ static bool lower_isp_fb(nir_builder *b, struct pfo_state *state)
 
    nir_def *undef = nir_undef(b, 1, 32);
 
-   nir_def *discard_cond = nir_is_helper_invocation(b, 1);
+   /* A shader that never discards needs no ISP feedback: keeping it lets the
+    * draw be opaque instead of punch-through.
+    */
+   nir_def *discard_cond = NULL;
+   if (!state->fs->trivial_ms || shader_may_discard(shader) ||
+       !writes_all_outputs(shader, state->fs))
+      discard_cond = nir_is_helper_invocation(b, 1);
 
    /* Drop depth writes and discard cond if early fragment tests. */
    if (shader->info.fs.early_fragment_tests) {
@@ -848,7 +878,7 @@ bool pco_nir_pfo(nir_shader *shader, pco_fs_data *fs)
    /* TODO: instead of doing multiple passes, probably better to just cache all
     * the stores
     */
-   if (!shader->info.internal) {
+   if (!shader->info.internal && !fs->trivial_ms) {
       progress |= nir_shader_intrinsics_pass(shader,
                                              lower_alpha_to_one,
                                              nir_metadata_control_flow,

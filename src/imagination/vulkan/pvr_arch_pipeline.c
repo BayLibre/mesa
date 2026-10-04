@@ -2772,6 +2772,17 @@ pvr_preprocess_shader_data(pco_data *data,
       if (state->ms)
          nir->info.fs.uses_sample_shading |= state->ms->sample_shading_enable;
 
+      data->fs.trivial_ms =
+         state->ms &&
+         !BITSET_TEST(state->dynamic, MESA_VK_DYNAMIC_MS_RASTERIZATION_SAMPLES) &&
+         !BITSET_TEST(state->dynamic, MESA_VK_DYNAMIC_MS_SAMPLE_MASK) &&
+         !BITSET_TEST(state->dynamic,
+                      MESA_VK_DYNAMIC_MS_ALPHA_TO_COVERAGE_ENABLE) &&
+         !BITSET_TEST(state->dynamic, MESA_VK_DYNAMIC_MS_ALPHA_TO_ONE_ENABLE) &&
+         state->ms->rasterization_samples <= VK_SAMPLE_COUNT_1_BIT &&
+         (state->ms->sample_mask & 1) && !state->ms->alpha_to_coverage_enable &&
+         !state->ms->alpha_to_one_enable && !nir->info.fs.uses_sample_shading;
+
       /* TODO: push consts, dynamic state, etc. */
       break;
    }

@@ -127,6 +127,11 @@ typedef struct _pco_fs_data {
    struct {
       bool color_write_enable;
    } meta_present;
+
+   /** Single sampled with static multisample state that keeps every
+    * covered sample: no alpha to coverage/one and sample 0 in the mask.
+    */
+   bool trivial_ms;
 } pco_fs_data;
 
 /** PCO compute shader-specific data. */
