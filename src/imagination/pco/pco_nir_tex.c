@@ -1409,34 +1409,41 @@ lower_image(nir_builder *b, nir_intrinsic_instr *intr, void *cb_data)
       frag_coords = nir_f2i32(b, frag_coords);
       coords = nir_iadd(b, frag_coords, coords);
 
-      nir_def *layer = nir_load_layer_id(b);
+      /* Without multiview the fragment layer is always 0, as no shader stage
+       * can write gl_Layer, and the attachment state already points at the
+       * view's base layer: sample it as a plain 2D texture rather than
+       * emulating array indexing in the shader.
+       */
+      if (data->common.multiview || data->common.image_2d_view_of_3d) {
+         nir_def *layer = nir_load_layer_id(b);
 
-      /* Use the view index instead if we're in multiview. */
-      if (data->common.multiview) {
-         assert(data->fs.view_index_slot >= VARYING_SLOT_VAR0 &&
-                data->fs.view_index_slot < VARYING_SLOT_MAX);
-         layer = nir_load_input(b,
-                                1,
-                                32,
-                                nir_imm_int(b, 0),
-                                .dest_type = nir_type_uint32,
-                                .io_semantics = (nir_io_semantics){
-                                   .location = data->fs.view_index_slot,
-                                   .num_slots = 1,
-                                });
+         /* Use the view index instead if we're in multiview. */
+         if (data->common.multiview) {
+            assert(data->fs.view_index_slot >= VARYING_SLOT_VAR0 &&
+                   data->fs.view_index_slot < VARYING_SLOT_MAX);
+            layer = nir_load_input(b,
+                                   1,
+                                   32,
+                                   nir_imm_int(b, 0),
+                                   .dest_type = nir_type_uint32,
+                                   .io_semantics = (nir_io_semantics){
+                                      .location = data->fs.view_index_slot,
+                                      .num_slots = 1,
+                                   });
 
-         nir_variable *view_index_var =
-            nir_get_variable_with_location(b->shader,
-                                           nir_var_shader_in,
-                                           data->fs.view_index_slot,
-                                           glsl_uint_type());
+            nir_variable *view_index_var =
+               nir_get_variable_with_location(b->shader,
+                                              nir_var_shader_in,
+                                              data->fs.view_index_slot,
+                                              glsl_uint_type());
 
-         view_index_var->data.interpolation = INTERP_MODE_FLAT;
+            view_index_var->data.interpolation = INTERP_MODE_FLAT;
+         }
+
+         coords = nir_pad_vector(b, coords, 3);
+         coords = nir_vector_insert_imm(b, coords, layer, 2);
+         is_array = true;
       }
-
-      coords = nir_pad_vector(b, coords, 3);
-      coords = nir_vector_insert_imm(b, coords, layer, 2);
-      is_array = true;
    } else if (data->common.image_2d_view_of_3d &&
               image_dim == GLSL_SAMPLER_DIM_2D && !is_array) {
       image_dim = GLSL_SAMPLER_DIM_3D;
