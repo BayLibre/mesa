@@ -932,16 +932,58 @@ static bool ditr_needs_pre_fence(pco_instr *instr)
  * \param[in,out] instr PCO instr.
  * \return True if progress was made.
  */
+static inline bool is_ditr(const pco_instr *instr)
+{
+   return instr && (instr->op == PCO_OP_DITR || instr->op == PCO_OP_DITRP);
+}
+
+/**
+ * \brief Whether a DITR/DITRP is followed by its wait and then by another
+ *        DITR/DITRP writing other registers, so that both can share one fence
+ *        and one wait.
+ */
+static bool ditr_can_share_wait(pco_instr *instr)
+{
+   pco_instr *wait = pco_next_instr(instr);
+   if (!wait || wait->op != PCO_OP_WDF)
+      return false;
+
+   pco_instr *next = pco_next_instr(wait);
+   if (!is_ditr(next) || next->parent_block != instr->parent_block)
+      return false;
+
+   if (pco_refs_are_overlapping_regs(instr->dest[0], next->dest[0]))
+      return false;
+
+   pco_foreach_instr_src (psrc, next) {
+      if (pco_ref_is_reg(*psrc) &&
+          pco_refs_are_overlapping_regs(*psrc, instr->dest[0]))
+         return false;
+   }
+
+   return true;
+}
+
 static bool try_legalize_ditr_fence(pco_instr *instr)
 {
-   if (instr->op != PCO_OP_DITR && instr->op != PCO_OP_DITRP)
+   if (!is_ditr(instr))
       return false;
 
    pco_builder b =
       pco_builder_create(instr->parent_func, pco_cursor_after_instr(instr));
 
-   /* Always insert a post-fence to enforce WDF ordering. */
-   pco_fence(&b);
+   /* Back-to-back iterations into distinct registers share the fence and
+    * the wait of the last one: drop the wait of the previous iteration, which
+    * the iteration loop has already gone past, and leave the fence out here.
+    */
+   pco_instr *prev_wait = pco_prev_instr(instr);
+   pco_instr *prev_ditr = prev_wait ? pco_prev_instr(prev_wait) : NULL;
+   if (is_ditr(prev_ditr) && ditr_can_share_wait(prev_ditr))
+      pco_instr_delete(prev_wait);
+
+   /* Otherwise always insert a post-fence to enforce WDF ordering. */
+   if (!ditr_can_share_wait(instr))
+      pco_fence(&b);
 
    if (ditr_needs_pre_fence(instr)) {
       b.cursor = pco_cursor_before_instr(instr);
