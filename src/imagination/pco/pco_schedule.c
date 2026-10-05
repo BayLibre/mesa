@@ -318,6 +318,7 @@ struct sched_ctx {
    unsigned region;
    struct sched_node **sim; /** Scratch list for sched_fits(). */
    int *cap; /** Pressure allowed at each original position. */
+   bool pinned_moved; /** Whether a pinned run was pulled up. */
    unsigned cap_window; /** See SCHED_CAP_WINDOW. */
 };
 
@@ -906,8 +907,10 @@ static bool sched_region(struct sched_ctx *ctx,
             cand = NULL;
 
          if (cand && cand != &nodes[next] &&
-             sched_fits(ctx, nodes, num_instrs, next, cand, live))
+             sched_fits(ctx, nodes, num_instrs, next, cand, live)) {
             best = cand;
+            ctx->pinned_moved = true;
+         }
       }
 
       /* Load immediates early so that their users do not depend on a group
@@ -983,7 +986,7 @@ static bool sched_region(struct sched_ctx *ctx,
 bool pco_schedule_alu(pco_shader *shader)
 {
    bool progress = false;
-   bool pinned = !PCO_DEBUG(NO_SCHED_PINNED);
+   bool pinned = !PCO_DEBUG(NO_SCHED_PINNED) && !shader->sched_no_pinned;
 
    if (PCO_DEBUG(NO_SCHED) || shader->no_sched)
       return false;
@@ -1081,6 +1084,7 @@ bool pco_schedule_alu(pco_shader *shader)
          util_dynarray_clear(&region);
       }
 
+      shader->sched_pinned_moved |= ctx.pinned_moved;
       ralloc_free(mem_ctx);
    }
 

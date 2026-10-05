@@ -108,14 +108,34 @@ static bool shader_is_better(pco_shader *a, pco_shader *b)
    return count_igrps(a) < count_igrps(b);
 }
 
+static pco_shader *compile_variant(pco_ctx *ctx,
+                                   nir_shader *nir,
+                                   pco_data *data,
+                                   void *mem_ctx,
+                                   bool no_sched,
+                                   bool no_pinned)
+{
+   pco_shader *shader = pco_trans_nir(ctx, nir, data, mem_ctx);
+   if (!shader)
+      return NULL;
+
+   shader->quiet = true;
+   shader->no_sched = no_sched;
+   shader->sched_no_pinned = no_pinned;
+   pco_process_ir(ctx, shader);
+
+   return shader;
+}
+
 /**
  * \brief Translates, processes and encodes a NIR shader.
  *
  * When the pre-RA scheduler changed the instruction order, the shader is
- * compiled a second time without it, and the scheduled result is only kept
- * if it does not spill more, does not need more temp allocation blocks and
- * does not have more instruction groups. When the unscheduled one wins, its
- * final IR is printed after the scheduled one.
+ * also compiled without it, and, when the scheduler moved non-ALU
+ * instructions, with regions that end at them. The kept result is the one
+ * with the fewest spills, then temp allocation blocks, then instruction
+ * groups. When another variant than the first one wins, its final IR is
+ * printed after the first one.
  *
  * \param[in] ctx PCO compiler context.
  * \param[in] nir NIR shader.
@@ -133,23 +153,37 @@ pco_compile_nir(pco_ctx *ctx, nir_shader *nir, pco_data *data, void *mem_ctx)
    pco_process_ir(ctx, shader);
 
    if (shader->sched_changed && !PCO_DEBUG(NO_SCHED_CHECK)) {
-      pco_shader *unsched = pco_trans_nir(ctx, nir, data, mem_ctx);
-      if (unsched) {
-         unsched->quiet = true;
-         unsched->no_sched = true;
-         pco_process_ir(ctx, unsched);
+      pco_shader *first = shader;
+      const char *kept = NULL;
 
-         if (shader_is_better(unsched, shader)) {
-            ralloc_free(shader);
-            shader = unsched;
+      pco_shader *alts[2] = {
+         shader->sched_pinned_moved
+            ? compile_variant(ctx, nir, data, mem_ctx, false, true)
+            : NULL,
+         compile_variant(ctx, nir, data, mem_ctx, true, false),
+      };
+      const char *names[2] = { "ALU-only scheduled", "unscheduled" };
 
-            shader->quiet = false;
-            if (pco_should_print_shader(shader)) {
-               printf("pco: kept the unscheduled shader\n");
-               pco_print_shader(shader, stdout, "after passes");
-            }
+      for (unsigned u = 0; u < ARRAY_SIZE(alts); ++u) {
+         if (!alts[u])
+            continue;
+
+         if (shader_is_better(alts[u], shader)) {
+            if (shader != first)
+               ralloc_free(shader);
+            shader = alts[u];
+            kept = names[u];
          } else {
-            ralloc_free(unsched);
+            ralloc_free(alts[u]);
+         }
+      }
+
+      if (shader != first) {
+         ralloc_free(first);
+         shader->quiet = false;
+         if (pco_should_print_shader(shader)) {
+            printf("pco: kept the %s shader\n", kept);
+            pco_print_shader(shader, stdout, "after passes");
          }
       }
    }

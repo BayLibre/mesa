@@ -390,6 +390,8 @@ typedef struct _pco_shader {
    bool is_legalized; /** Whether the shader has been legalized. */
    bool no_sched; /** Whether pco_schedule_alu is skipped. */
    bool sched_changed; /** Whether pco_schedule_alu reordered anything. */
+   bool sched_no_pinned; /** Whether scheduling regions end at non-ALU ops. */
+   bool sched_pinned_moved; /** Whether pco_schedule_alu moved non-ALU ops. */
    bool quiet; /** Whether debug printing is suppressed. */
 
    struct list_head funcs; /** List of functions. */
