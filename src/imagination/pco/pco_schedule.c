@@ -17,6 +17,7 @@
 #include "util/macros.h"
 #include "util/u_dynarray.h"
 
+#include <inttypes.h>
 #include <stdbool.h>
 
 /**
@@ -139,6 +140,130 @@ bool pco_reuse_imms(pco_shader *shader)
 
       rewrite_ssa_uses(func, repl);
       _mesa_hash_table_u64_destroy(repl);
+   }
+
+   return progress;
+}
+
+/** Whether a hardware register keeps its value for the whole shader. */
+static bool is_invariant_hwreg(const pco_shader *shader, pco_ref ref)
+{
+   if (!pco_ref_is_reg(ref))
+      return false;
+
+   switch (pco_ref_get_reg_class(ref)) {
+   case PCO_REG_CLASS_SPEC:
+   case PCO_REG_CLASS_CONST:
+      return true;
+
+   case PCO_REG_CLASS_SHARED:
+   case PCO_REG_CLASS_COEFF:
+      return shader->stage != MESA_SHADER_COMPUTE;
+
+   default:
+      return false;
+   }
+}
+
+/**
+ * \brief Reuses an earlier vec of the same block built from the same values,
+ *        where an immediate load counts as its value.
+ *
+ * Every texture sample builds its own coordinate vec, even when several
+ * samples read the same coordinates, which then costs one copy per
+ * component and sample.
+ *
+ * \param[in,out] shader PCO shader.
+ * \return True if the pass made progress.
+ */
+bool pco_cse_vecs(pco_shader *shader)
+{
+   bool progress = false;
+
+   pco_foreach_func_in_shader (func, shader) {
+      void *mem_ctx = ralloc_context(NULL);
+      struct hash_table_u64 *repl = _mesa_hash_table_u64_create(mem_ctx);
+
+      /* Immediate value + 1 of each SSA value loaded by a movi32. */
+      uint64_t *imm_of = rzalloc_array(mem_ctx, uint64_t, func->next_ssa);
+      pco_foreach_instr_in_func (instr, func) {
+         if (instr->op != PCO_OP_MOVI32 || !pco_ref_is_ssa(instr->dest[0]))
+            continue;
+
+         if (pco_instr_has_exec_cnd(instr) &&
+             pco_instr_get_exec_cnd(instr) != PCO_EXEC_CND_E1_ZX)
+            continue;
+
+         imm_of[instr->dest[0].val] =
+            (uint64_t)pco_ref_get_imm(instr->src[0]) + 1;
+      }
+
+      pco_foreach_block_in_func (block, func) {
+         struct hash_table *vecs = _mesa_hash_table_create(mem_ctx,
+                                                           _mesa_hash_string,
+                                                           _mesa_key_string_equal);
+
+         pco_foreach_instr_in_block_safe (instr, block) {
+            if (instr->op != PCO_OP_VEC || !pco_ref_is_ssa(instr->dest[0]))
+               continue;
+
+            if (pco_instr_has_exec_cnd(instr) &&
+                pco_instr_get_exec_cnd(instr) != PCO_EXEC_CND_E1_ZX)
+               continue;
+
+            char *key = ralloc_asprintf(mem_ctx,
+                                        "%u",
+                                        pco_ref_get_bits(instr->dest[0]));
+            bool keyed = true;
+            pco_foreach_instr_src (psrc, instr) {
+               if (pco_ref_has_mods_set(*psrc)) {
+                  keyed = false;
+                  break;
+               }
+
+               if (is_invariant_hwreg(shader, *psrc)) {
+                  ralloc_asprintf_append(&key,
+                                         ",r%u:%u:%u",
+                                         pco_ref_get_reg_class(*psrc),
+                                         pco_ref_get_reg_index(*psrc),
+                                         pco_ref_get_chans(*psrc));
+                  continue;
+               }
+
+               if (!pco_ref_is_ssa(*psrc)) {
+                  keyed = false;
+                  break;
+               }
+
+               uint64_t imm = imm_of[psrc->val];
+               if (imm)
+                  ralloc_asprintf_append(&key, ",i%" PRIu64, imm - 1);
+               else
+                  ralloc_asprintf_append(&key, ",s%u", psrc->val);
+            }
+
+            if (!keyed)
+               continue;
+
+            struct hash_entry *entry = _mesa_hash_table_search(vecs, key);
+            if (!entry) {
+               _mesa_hash_table_insert(vecs, key, instr);
+               continue;
+            }
+
+            pco_instr *earlier = entry->data;
+            _mesa_hash_table_u64_insert(repl,
+                                        instr->dest[0].val,
+                                        (void *)(uintptr_t)(earlier->dest[0].val + 1));
+            pco_instr_delete(instr);
+            progress = true;
+         }
+      }
+
+      if (progress)
+         rewrite_ssa_uses(func, repl);
+
+      ralloc_free(mem_ctx);
    }
 
    return progress;

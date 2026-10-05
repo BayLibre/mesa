@@ -1854,6 +1854,7 @@ bool pco_opt(pco_shader *shader);
 bool pco_ra(pco_shader *shader);
 bool pco_schedule(pco_shader *shader);
 bool pco_reuse_imms(pco_shader *shader);
+bool pco_cse_vecs(pco_shader *shader);
 bool pco_schedule_alu(pco_shader *shader);
 bool pco_shared_imms(pco_shader *shader);
 bool pco_shrink_vecs(pco_shader *shader);
