@@ -711,7 +711,7 @@ static void pco_nir_opt(pco_ctx *ctx, nir_shader *nir, pco_data *data, bool alge
 
       NIR_PASS(progress, nir, nir_opt_phi_precision);
       NIR_PASS(progress, nir, nir_lower_alu);
-      NIR_PASS(progress, nir, pco_nir_lower_alu);
+      NIR_PASS(progress, nir, pco_nir_lower_alu, !algebraic);
       NIR_PASS(progress, nir, nir_lower_pack);
 
       if (algebraic) {
