@@ -60,6 +60,249 @@ bool pco_schedule(pco_shader *shader)
    return progress;
 }
 
+/** Registers written or read by a data fence operation still in flight. */
+struct pending_range {
+   pco_ref drc;
+   enum pco_reg_class class;
+   unsigned start;
+   unsigned end;
+   bool written; /* Destination: any later access is a hazard. */
+};
+
+static bool ref_range(pco_ref ref,
+                      unsigned rpt,
+                      enum pco_reg_class *class,
+                      unsigned *start,
+                      unsigned *end)
+{
+   if (!pco_ref_is_reg(ref))
+      return false;
+
+   *class = pco_ref_get_reg_class(ref);
+   *start = ref.val;
+   *end = ref.val + MAX2(pco_ref_get_chans(ref), 1) * MAX2(rpt, 1);
+   return true;
+}
+
+static unsigned instr_rpt(pco_instr *instr)
+{
+   return pco_instr_has_rpt(instr) ? pco_instr_get_rpt(instr) : 1;
+}
+
+static void wait_drc_ranges(pco_func *func,
+                            pco_cursor cursor,
+                            struct util_dynarray *pending,
+                            pco_ref drc)
+{
+   pco_builder b = pco_builder_create(func, cursor);
+   pco_wdf(&b, drc);
+
+   unsigned kept = 0;
+   util_dynarray_foreach (pending, struct pending_range, range) {
+      if (range->drc.val == drc.val)
+         continue;
+
+      *util_dynarray_element(pending, struct pending_range, kept++) = *range;
+   }
+   pending->size = kept * sizeof(struct pending_range);
+}
+
+static void wait_all_ranges(pco_func *func,
+                            pco_cursor cursor,
+                            struct util_dynarray *pending)
+{
+   while (util_dynarray_num_elements(pending, struct pending_range)) {
+      pco_ref drc =
+         util_dynarray_element(pending, struct pending_range, 0)->drc;
+      wait_drc_ranges(func, cursor, pending, drc);
+   }
+}
+
+/**
+ * \brief Returns the data fence counter whose in-flight operations an access
+ * conflicts with, if any.
+ */
+static bool access_conflicts(struct util_dynarray *pending,
+                             pco_ref ref,
+                             unsigned rpt,
+                             bool write,
+                             pco_ref *drc)
+{
+   if (pco_ref_is_idx_reg(ref)) {
+      /* Unknown registers: wait for everything. */
+      if (!util_dynarray_num_elements(pending, struct pending_range))
+         return false;
+
+      *drc = util_dynarray_element(pending, struct pending_range, 0)->drc;
+      return true;
+   }
+
+   enum pco_reg_class class;
+   unsigned start, end;
+   if (!ref_range(ref, rpt, &class, &start, &end))
+      return false;
+
+   util_dynarray_foreach (pending, struct pending_range, range) {
+      if (!range->written && !write)
+         continue;
+
+      if (range->class == class && start < range->end && range->start < end) {
+         *drc = range->drc;
+         return true;
+      }
+   }
+
+   return false;
+}
+
+static bool is_deferrable(const pco_instr *instr)
+{
+   switch (instr->op) {
+   case PCO_OP_SMP:
+   case PCO_OP_LD:
+   case PCO_OP_LD_REGBL:
+      return true;
+
+   default:
+      return false;
+   }
+}
+
+static bool ends_straight_line(pco_instr *instr)
+{
+   switch (instr->op) {
+   case PCO_OP_BR:
+   case PCO_OP_BREAK:
+   case PCO_OP_CONTINUE:
+      return true;
+
+   default:
+      break;
+   }
+
+   return pco_instr_has_end(instr) && pco_instr_get_end(instr);
+}
+
+/**
+ * \brief Moves the wait after a sample or load down to the first access to
+ * the registers it uses.
+ *
+ * Runs after register allocation, so that physical registers, including the
+ * unused components of a destination, are protected until the wait: a late
+ * result must not land in a register already reused for something else.
+ * Everything is waited for before control flow and at the end of each block.
+ *
+ * \param[in,out] shader PCO shader.
+ * \return True if the pass made progress.
+ */
+bool pco_defer_waits(pco_shader *shader)
+{
+   bool progress = false;
+   struct util_dynarray pending;
+   util_dynarray_init(&pending, NULL);
+
+   pco_foreach_func_in_shader (func, shader) {
+      pco_foreach_block_in_func (block, func) {
+         pco_instr *skip_wdf = NULL;
+
+         pco_foreach_instr_in_block_safe (instr, block) {
+            if (instr == skip_wdf) {
+               pco_instr_delete(instr);
+               skip_wdf = NULL;
+               progress = true;
+               continue;
+            }
+            skip_wdf = NULL;
+
+            if (instr->op == PCO_OP_WDF) {
+               wait_drc_ranges(func,
+                               pco_cursor_before_instr(instr),
+                               &pending,
+                               instr->src[0]);
+               pco_instr_delete(instr);
+               continue;
+            }
+
+            pco_ref drc_src = pco_ref_null();
+            pco_foreach_instr_src (psrc, instr) {
+               if (pco_ref_is_drc(*psrc))
+                  drc_src = *psrc;
+            }
+            bool uses_drc = !pco_ref_is_null(drc_src);
+
+            if (ends_straight_line(instr) || instr->op == PCO_OP_IDF ||
+                (uses_drc && !is_deferrable(instr))) {
+               wait_all_ranges(func, pco_cursor_before_instr(instr), &pending);
+               continue;
+            }
+
+            unsigned rpt = instr_rpt(instr);
+            pco_ref drc;
+            bool waited;
+            do {
+               waited = false;
+               pco_foreach_instr_src (psrc, instr) {
+                  if (access_conflicts(&pending, *psrc, rpt, false, &drc)) {
+                     wait_drc_ranges(func,
+                                     pco_cursor_before_instr(instr),
+                                     &pending,
+                                     drc);
+                     waited = true;
+                     break;
+                  }
+               }
+               if (waited)
+                  continue;
+
+               pco_foreach_instr_dest (pdest, instr) {
+                  if (access_conflicts(&pending, *pdest, rpt, true, &drc)) {
+                     wait_drc_ranges(func,
+                                     pco_cursor_before_instr(instr),
+                                     &pending,
+                                     drc);
+                     waited = true;
+                     break;
+                  }
+               }
+            } while (waited);
+
+            if (!uses_drc)
+               continue;
+
+            /* A deferrable operation: its wait is the next instruction. */
+            pco_instr *next = pco_next_instr(instr);
+            if (!next || next->op != PCO_OP_WDF ||
+                next->src[0].val != drc_src.val)
+               continue;
+
+            pco_foreach_instr_dest (pdest, instr) {
+               struct pending_range range = { .drc = drc_src, .written = true };
+               if (ref_range(*pdest, rpt, &range.class, &range.start, &range.end))
+                  util_dynarray_append(&pending, range);
+            }
+            pco_foreach_instr_src (psrc, instr) {
+               struct pending_range range = { .drc = drc_src, .written = false };
+               if (ref_range(*psrc, rpt, &range.class, &range.start, &range.end))
+                  util_dynarray_append(&pending, range);
+            }
+
+            skip_wdf = next;
+         }
+
+         pco_instr *last = pco_last_instr(block);
+         wait_all_ranges(func,
+                         last && ends_straight_line(last)
+                            ? pco_cursor_before_instr(last)
+                            : pco_cursor_after_block(block),
+                         &pending);
+      }
+   }
+
+   util_dynarray_fini(&pending);
+
+   return progress;
+}
+
 /** How far back an immediate load can be reused, to bound register pressure. */
 #define PCO_IMM_REUSE_WINDOW 32
 
