@@ -270,22 +270,42 @@ static inline bool try_back_prop_instr(struct pco_use *uses, pco_instr *instr)
 
    if (pco_ref_is_reg(*pdest_from) &&
        pco_ref_get_reg_class(*pdest_from) == PCO_REG_CLASS_PIXOUT) {
-      return false;
+      if (instr->parent_block != use->instr->parent_block)
+         return false;
 
-      bool has_isp_fb = false;
+      /* Memory and sample results land asynchronously, after their data
+       * fence wait, so they can't target the outputs directly.
+       */
+      pco_foreach_instr_src (psrc, instr) {
+         if (pco_ref_is_drc(*psrc))
+            return false;
+      }
 
+      /* The write moves up to instr: nothing in between may give ISP
+       * feedback or touch the same output.
+       */
       pco_foreach_instr_in_func_from_rev (rev_instr, use->instr) {
          if (rev_instr == instr)
             break;
 
-         if (rev_instr->op == PCO_OP_ALPHAF || rev_instr->op == PCO_OP_DEPTHF) {
-            has_isp_fb = true;
-            break;
+         if (rev_instr == use->instr)
+            continue;
+
+         if (rev_instr->op == PCO_OP_ALPHAF || rev_instr->op == PCO_OP_DEPTHF)
+            return false;
+
+         pco_foreach_instr_dest (pdest, rev_instr) {
+            if (pco_ref_is_reg(*pdest) &&
+                pco_refs_are_overlapping_regs(*pdest, *pdest_from))
+               return false;
+         }
+
+         pco_foreach_instr_src (psrc, rev_instr) {
+            if (pco_ref_is_reg(*psrc) &&
+                pco_refs_are_overlapping_regs(*psrc, *pdest_from))
+               return false;
          }
       }
-
-      if (has_isp_fb)
-         return false;
 
       /* Don't move pixout regs into instructions that already use them. */
       pco_foreach_instr_src (psrc, instr) {
