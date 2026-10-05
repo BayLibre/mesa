@@ -51,6 +51,9 @@ static const struct debug_named_value pco_debug_options[] = {
    { "no_sched_check",
      PCO_DEBUG_NO_SCHED_CHECK,
      "Keep the scheduled shader without comparing it to an unscheduled one." },
+   { "no_sched_pinned",
+     PCO_DEBUG_NO_SCHED_PINNED,
+     "End pre-RA scheduling regions at memory, sample and fence ops." },
    DEBUG_NAMED_VALUE_END,
 };
 

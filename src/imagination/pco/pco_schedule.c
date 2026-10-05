@@ -274,13 +274,26 @@ bool pco_cse_vecs(pco_shader *shader)
 /** How far ahead of the original order an instruction can be pulled up. */
 #define SCHED_WINDOW 16
 
+/**
+ * Neighbourhood whose original pressure bounds the pressure of a position
+ * when regions span non-ALU instructions. Regions made of ALU code only are
+ * bounded by their overall original peak instead.
+ */
+#define SCHED_CAP_WINDOW 4
+
+/** How far ahead the next pinned run can be pulled up. */
+#define SCHED_PIN_WINDOW (2 * SCHED_WINDOW)
+
 /** Scheduling DAG node: one instruction of a region. */
 struct sched_node {
    pco_instr *instr;
    unsigned orig; /** Position in the original order. */
    unsigned num_preds; /** Unscheduled predecessors. */
    struct util_dynarray succs; /** struct sched_node * */
+   struct util_dynarray preds; /** struct sched_node * */
+   unsigned visit; /** Last ancestor walk that reached the node. */
    int defs; /** Register units of the dests that are used. */
+   bool pinned; /** Keeps its order relative to the other pinned nodes. */
    bool scheduled;
 };
 
@@ -303,6 +316,9 @@ struct sched_ctx {
    struct sched_ssa *ssa;
    struct sched_vreg *vreg;
    unsigned region;
+   struct sched_node **sim; /** Scratch list for sched_fits(). */
+   int *cap; /** Pressure allowed at each original position. */
+   unsigned cap_window; /** See SCHED_CAP_WINDOW. */
 };
 
 /**
@@ -389,6 +405,66 @@ static bool sched_is_alu(pco_instr *instr)
 }
 
 /**
+ * \brief Returns whether a non-ALU instruction can sit inside a region.
+ *
+ * Such instructions (memory, sample and iteration ops and their data fence
+ * waits) keep their order among themselves; ALU code only moves across them
+ * following its data dependencies. They write SSA values only and do not
+ * touch predicates.
+ */
+static bool sched_is_pinnable(pco_instr *instr)
+{
+   switch (instr->op) {
+   case PCO_OP_SMP:
+   case PCO_OP_LD:
+   case PCO_OP_LD_REGBL:
+   case PCO_OP_ST:
+   case PCO_OP_ST_REGBL:
+   case PCO_OP_ST32:
+   case PCO_OP_ST32_REGBL:
+   case PCO_OP_WDF:
+   case PCO_OP_IDF:
+   case PCO_OP_FITR:
+   case PCO_OP_FITRP:
+   case PCO_OP_DITR:
+   case PCO_OP_DITRP:
+   case PCO_OP_FDSX:
+   case PCO_OP_FDSXF:
+   case PCO_OP_FDSY:
+   case PCO_OP_FDSYF:
+      break;
+
+   default:
+      return false;
+   }
+
+   pco_foreach_instr_dest (pdest, instr) {
+      if (!pco_ref_is_null(*pdest) && !pco_ref_is_ssa(*pdest) &&
+          !pco_ref_is_vreg(*pdest))
+         return false;
+   }
+
+   pco_foreach_instr_src (psrc, instr) {
+      if (!pco_ref_is_null(*psrc) && !pco_ref_is_ssa(*psrc) &&
+          !pco_ref_is_reg(*psrc) && !pco_ref_is_imm(*psrc) &&
+          !pco_ref_is_drc(*psrc))
+         return false;
+   }
+
+   return true;
+}
+
+static int sched_drc(const pco_instr *instr)
+{
+   pco_foreach_instr_src (psrc, instr) {
+      if (pco_ref_is_drc(*psrc))
+         return pco_ref_get_drc(*psrc);
+   }
+
+   return -1;
+}
+
+/**
  * \brief Returns whether an op usually becomes a lone phase 0 op which another
  *        op can later be co-issued with.
  */
@@ -422,6 +498,7 @@ static void sched_add_edge(struct sched_node *from, struct sched_node *to)
    }
 
    util_dynarray_append_typed(&from->succs, struct sched_node *, to);
+   util_dynarray_append_typed(&to->preds, struct sched_node *, from);
    ++to->num_preds;
 }
 
@@ -528,6 +605,66 @@ static bool sched_is_copy_of(const struct sched_node *node,
 }
 
 /**
+ * \brief Returns whether the run of originally consecutive pinned nodes
+ *        starting at start only waits on nodes of the run itself.
+ */
+static bool sched_run_ready(struct sched_node *nodes,
+                            unsigned num_nodes,
+                            unsigned start)
+{
+   for (unsigned k = start; k < num_nodes && nodes[k].pinned; ++k) {
+      unsigned internal = 0;
+      for (unsigned j = start; j < k; ++j) {
+         if (sched_is_succ(&nodes[j], &nodes[k]))
+            ++internal;
+      }
+
+      if (nodes[k].num_preds != internal)
+         return false;
+   }
+
+   return true;
+}
+
+/**
+ * \brief Returns the ready, unpinned node with the lowest original position
+ *        among the unscheduled ancestors of the pinned run starting at start.
+ */
+static struct sched_node *sched_run_ancestor(struct sched_node *nodes,
+                                             unsigned num_nodes,
+                                             unsigned start,
+                                             unsigned visit)
+{
+   struct sched_node *best = NULL;
+   struct util_dynarray stack;
+   util_dynarray_init(&stack, NULL);
+
+   for (unsigned k = start; k < num_nodes && nodes[k].pinned; ++k)
+      util_dynarray_append_typed(&stack, struct sched_node *, &nodes[k]);
+
+   while (util_dynarray_num_elements(&stack, struct sched_node *)) {
+      struct sched_node *node =
+         util_dynarray_pop(&stack, struct sched_node *);
+
+      util_dynarray_foreach (&node->preds, struct sched_node *, ppred) {
+         struct sched_node *pred = *ppred;
+         if (pred->scheduled || pred->visit == visit)
+            continue;
+
+         pred->visit = visit;
+         if (!pred->num_preds && !pred->pinned &&
+             (!best || pred->orig < best->orig))
+            best = pred;
+
+         util_dynarray_append_typed(&stack, struct sched_node *, pred);
+      }
+   }
+
+   util_dynarray_fini(&stack);
+   return best;
+}
+
+/**
  * \brief Returns whether scheduling cand now, then the rest of the region in
  *        its original order, keeps the live register units within cap.
  *
@@ -539,47 +676,45 @@ static bool sched_fits(struct sched_ctx *ctx,
                        unsigned num_nodes,
                        unsigned next,
                        struct sched_node *cand,
-                       int live,
-                       int cap)
+                       int live)
 {
+   /* A pinned candidate brings the rest of its pinned run along. */
+   unsigned cand_end = cand->orig + 1;
+   if (cand->pinned) {
+      while (cand_end < num_nodes && nodes[cand_end].pinned)
+         ++cand_end;
+   }
+
+   unsigned num_sim = 0;
    bool fits = true;
-   unsigned n = next;
-   struct sched_node *node = cand;
-   struct sched_node *stop = NULL;
 
-   while (node) {
-      if (live + node->defs > cap) {
-         fits = false;
-         stop = node;
-         break;
-      }
+   for (unsigned pass = 0; pass < 2 && fits; ++pass) {
+      unsigned from = pass ? next : cand->orig;
+      unsigned to = pass ? num_nodes : cand_end;
 
-      live += node->defs - sched_kills(ctx, node);
-      sched_retire(ctx, node);
+      for (unsigned n = from; n < to; ++n) {
+         struct sched_node *node = &nodes[n];
+         bool in_cand = n >= cand->orig && n < cand_end;
+         if (node->scheduled || (pass && in_cand))
+            continue;
 
-      node = NULL;
-      for (; n < num_nodes; ++n) {
-         if (!nodes[n].scheduled && &nodes[n] != cand) {
-            node = &nodes[n++];
+         /* Pulled nodes run at the current position. */
+         int cap = ctx->cap[pass ? n : next];
+         if (live + node->defs > cap) {
+            fits = false;
             break;
          }
+
+         live += node->defs - sched_kills(ctx, node);
+         sched_retire(ctx, node);
+         ctx->sim[num_sim++] = node;
       }
    }
 
    /* Undo the simulated uses. */
-   for (node = cand; node && node != stop;) {
-      pco_foreach_instr_src_ssa (psrc, node->instr) {
+   for (unsigned n = 0; n < num_sim; ++n) {
+      pco_foreach_instr_src_ssa (psrc, ctx->sim[n]->instr) {
          ++ctx->ssa[psrc->val].uses_left;
-      }
-
-      struct sched_node *prev = node;
-      node = NULL;
-      for (unsigned m = (prev == cand ? next : prev - nodes + 1); m < num_nodes;
-           ++m) {
-         if (!nodes[m].scheduled && &nodes[m] != cand) {
-            node = &nodes[m];
-            break;
-         }
       }
    }
 
@@ -600,13 +735,18 @@ static bool sched_fits(struct sched_ctx *ctx,
  */
 static bool sched_region(struct sched_ctx *ctx,
                          pco_instr **instrs,
-                         unsigned num_instrs)
+                         unsigned num_instrs,
+                         unsigned drcs_in_flight)
 {
    ++ctx->region;
 
    struct sched_node *nodes = rzalloc_array(ctx->mem_ctx,
                                             struct sched_node,
                                             num_instrs);
+   ctx->sim = ralloc_array(ctx->mem_ctx, struct sched_node *, num_instrs);
+
+   struct sched_node *last_pinned = NULL;
+   unsigned start_drcs = drcs_in_flight;
 
    for (unsigned n = 0; n < num_instrs; ++n) {
       struct sched_node *node = &nodes[n];
@@ -615,6 +755,25 @@ static bool sched_region(struct sched_ctx *ctx,
       node->instr = instr;
       node->orig = n;
       util_dynarray_init(&node->succs, ctx->mem_ctx);
+      util_dynarray_init(&node->preds, ctx->mem_ctx);
+
+      /* ALU code between a data fence op and its wait stays there, and no
+       * other ALU code moves there: the op may still read its sources or
+       * write its destinations.
+       */
+      node->pinned = !sched_is_alu(instr) || drcs_in_flight;
+      if (node->pinned) {
+         sched_add_edge(last_pinned, node);
+         last_pinned = node;
+      }
+
+      int drc = sched_drc(instr);
+      if (drc >= 0) {
+         if (instr->op == PCO_OP_WDF)
+            drcs_in_flight &= ~BITFIELD_BIT(drc);
+         else
+            drcs_in_flight |= BITFIELD_BIT(drc);
+      }
 
       pco_foreach_instr_src_ssa (psrc, instr) {
          struct sched_ssa *ssa = sched_get_ssa(ctx, psrc->val);
@@ -647,13 +806,33 @@ static bool sched_region(struct sched_ctx *ctx,
       }
    }
 
-   /* Peak pressure of the original order, relative to the region start. */
+   /* Pressure of the original order, relative to the region start. Each
+    * position may reach the highest original pressure of its neighbourhood.
+    */
    int live = 0;
-   int cap = 0;
+   int *peak = ralloc_array(ctx->mem_ctx, int, num_instrs);
    for (unsigned n = 0; n < num_instrs; ++n) {
-      cap = MAX2(cap, live + nodes[n].defs);
+      peak[n] = live + nodes[n].defs;
       live += nodes[n].defs - sched_kills(ctx, &nodes[n]);
       sched_retire(ctx, &nodes[n]);
+   }
+   ctx->cap = ralloc_array(ctx->mem_ctx, int, num_instrs);
+   int region_peak = 0;
+   for (unsigned n = 0; n < num_instrs; ++n)
+      region_peak = MAX2(region_peak, peak[n]);
+
+   for (unsigned n = 0; n < num_instrs; ++n) {
+      unsigned w = ctx->cap_window;
+      if (w >= num_instrs) {
+         ctx->cap[n] = region_peak;
+         continue;
+      }
+
+      unsigned from = n > w ? n - w : 0;
+      unsigned to = MIN2(n + w + 1, num_instrs);
+      ctx->cap[n] = 0;
+      for (unsigned k = from; k < to; ++k)
+         ctx->cap[n] = MAX2(ctx->cap[n], peak[k]);
    }
 
    for (unsigned n = 0; n < num_instrs; ++n) {
@@ -670,6 +849,8 @@ static bool sched_region(struct sched_ctx *ctx,
    live = 0;
 
    unsigned next = 0;
+   unsigned next_pinned = 0;
+   drcs_in_flight = start_drcs;
    for (unsigned s = 0; s < num_instrs; ++s) {
       while (nodes[next].scheduled)
          ++next;
@@ -678,17 +859,27 @@ static bool sched_region(struct sched_ctx *ctx,
       struct sched_node *best = NULL;
       bool best_pair = false;
 
+      /* Pinned instructions that were next to each other stay together, so
+       * a data fence op is always directly followed by its wait.
+       */
+      if (last && last->pinned && last->orig + 1 < num_instrs &&
+          nodes[last->orig + 1].pinned) {
+         best = &nodes[last->orig + 1];
+         assert(!best->num_preds);
+      }
+
       /* After a pairable op, pull up an independent pairable op (or a copy of
        * its result) for the co-issue pass.
        */
-      for (unsigned n = next + 1; open && n < end; ++n) {
+      for (unsigned n = next + 1; open && !best && !drcs_in_flight && n < end;
+           ++n) {
          struct sched_node *node = &nodes[n];
-         if (node->scheduled || node->num_preds)
+         if (node->scheduled || node->num_preds || node->pinned)
             continue;
 
          if (sched_is_copy_of(node, last) ||
              (sched_is_pairable(node->instr) && !sched_is_succ(last, node))) {
-            if (sched_fits(ctx, nodes, num_instrs, next, node, live, cap)) {
+            if (sched_fits(ctx, nodes, num_instrs, next, node, live)) {
                best = node;
                best_pair = true;
             }
@@ -696,16 +887,39 @@ static bool sched_region(struct sched_ctx *ctx,
          }
       }
 
+      /* Issue the next pinned instruction as soon as its sources are ready,
+       * so that the ALU code using its result can be interleaved with the
+       * code before it.
+       */
+      while (next_pinned < num_instrs &&
+             (!nodes[next_pinned].pinned || nodes[next_pinned].scheduled))
+         ++next_pinned;
+
+      if (!best && next_pinned < num_instrs && next_pinned != next &&
+          next_pinned < next + SCHED_PIN_WINDOW) {
+         struct sched_node *cand;
+         if (sched_run_ready(nodes, num_instrs, next_pinned))
+            cand = &nodes[next_pinned];
+         else if (!drcs_in_flight)
+            cand = sched_run_ancestor(nodes, num_instrs, next_pinned, s + 1);
+         else
+            cand = NULL;
+
+         if (cand && cand != &nodes[next] &&
+             sched_fits(ctx, nodes, num_instrs, next, cand, live))
+            best = cand;
+      }
+
       /* Load immediates early so that their users do not depend on a group
        * sitting between two co-issue candidates.
        */
-      for (unsigned n = next + 1; !best && n < end; ++n) {
+      for (unsigned n = next + 1; !best && !drcs_in_flight && n < end; ++n) {
          struct sched_node *node = &nodes[n];
-         if (node->scheduled || node->num_preds ||
+         if (node->scheduled || node->num_preds || node->pinned ||
              node->instr->op != PCO_OP_MOVI32)
             continue;
 
-         if (sched_fits(ctx, nodes, num_instrs, next, node, live, cap))
+         if (sched_fits(ctx, nodes, num_instrs, next, node, live))
             best = node;
          break;
       }
@@ -719,6 +933,16 @@ static bool sched_region(struct sched_ctx *ctx,
       }
 
       assert(best && !best->num_preds);
+      assert(best->pinned || !drcs_in_flight);
+
+      int drc = sched_drc(best->instr);
+      if (drc >= 0) {
+         if (best->instr->op == PCO_OP_WDF)
+            drcs_in_flight &= ~BITFIELD_BIT(drc);
+         else
+            drcs_in_flight |= BITFIELD_BIT(drc);
+      }
+
       live += best->defs - sched_kills(ctx, best);
       sched_retire(ctx, best);
       best->scheduled = true;
@@ -759,6 +983,7 @@ static bool sched_region(struct sched_ctx *ctx,
 bool pco_schedule_alu(pco_shader *shader)
 {
    bool progress = false;
+   bool pinned = !PCO_DEBUG(NO_SCHED_PINNED);
 
    if (PCO_DEBUG(NO_SCHED) || shader->no_sched)
       return false;
@@ -782,6 +1007,7 @@ bool pco_schedule_alu(pco_shader *shader)
          .mem_ctx = mem_ctx,
          .ssa = rzalloc_array(mem_ctx, struct sched_ssa, func->next_ssa),
          .vreg = rzalloc_array(mem_ctx, struct sched_vreg, func->next_vreg),
+         .cap_window = pinned ? SCHED_CAP_WINDOW : UINT_MAX,
       };
 
       for (unsigned u = 0; u < func->next_vreg; ++u)
@@ -798,6 +1024,7 @@ bool pco_schedule_alu(pco_shader *shader)
 
       pco_foreach_block_in_func (block, func) {
          enum pco_exec_cnd region_cnd = PCO_EXEC_CND_E1_ZX;
+         unsigned block_drcs = 0, region_drcs = 0;
          pco_instr *next;
          for (pco_instr *instr =
                  list_first_entry(&block->instrs, pco_instr, link);
@@ -808,7 +1035,8 @@ bool pco_schedule_alu(pco_shader *shader)
             /* A region holds instructions under the same predicate; nothing
              * in it writes p0.
              */
-            bool alu = sched_is_alu(instr);
+            bool alu = sched_is_alu(instr) ||
+                       (pinned && sched_is_pinnable(instr));
             enum pco_exec_cnd cnd = pco_instr_has_exec_cnd(instr)
                                        ? pco_instr_get_exec_cnd(instr)
                                        : PCO_EXEC_CND_E1_ZX;
@@ -818,21 +1046,38 @@ bool pco_schedule_alu(pco_shader *shader)
                if (num > 2) {
                   progress |= sched_region(&ctx,
                                            util_dynarray_begin(&region),
-                                           num);
+                                           num,
+                                           region_drcs);
                }
                util_dynarray_clear(&region);
+               num = 0;
             }
 
-            if (!alu)
-               continue;
+            if (alu) {
+               if (!num)
+                  region_drcs = block_drcs;
 
-            region_cnd = cnd;
-            util_dynarray_append_typed(&region, pco_instr *, instr);
+               region_cnd = cnd;
+               util_dynarray_append_typed(&region, pco_instr *, instr);
+            }
+
+            /* Data fence ops still in flight where the next region starts. */
+            int drc = sched_drc(instr);
+            if (drc >= 0) {
+               if (instr->op == PCO_OP_WDF)
+                  block_drcs &= ~BITFIELD_BIT(drc);
+               else
+                  block_drcs |= BITFIELD_BIT(drc);
+            }
          }
 
          unsigned num = util_dynarray_num_elements(&region, pco_instr *);
-         if (num > 2)
-            progress |= sched_region(&ctx, util_dynarray_begin(&region), num);
+         if (num > 2) {
+            progress |= sched_region(&ctx,
+                                     util_dynarray_begin(&region),
+                                     num,
+                                     region_drcs);
+         }
          util_dynarray_clear(&region);
       }
 
