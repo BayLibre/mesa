@@ -610,6 +610,57 @@ static bool pco_ra_func(pco_func *func, pco_ra_ctx *ctx)
       }
    }
 
+   /* A vec of consecutive components of one vector is a subrange of it. */
+   pco_instr **comp_defs =
+      rzalloc_array_size(ra_regs, sizeof(*comp_defs), num_ssas);
+   pco_foreach_instr_in_func (instr, func) {
+      if (instr->op == PCO_OP_COMP)
+         comp_defs[instr->dest[0].val] = instr;
+   }
+
+   pco_foreach_instr_in_func (instr, func) {
+      if (instr->op != PCO_OP_VEC ||
+          _mesa_hash_table_u64_search(overrides, instr->dest[0].val))
+         continue;
+
+      if (pco_instr_has_exec_cnd(instr) &&
+          pco_instr_get_exec_cnd(instr) != PCO_EXEC_CND_E1_ZX)
+         continue;
+
+      pco_ref parent = pco_ref_null();
+      unsigned base = 0;
+      unsigned n = 0;
+      bool subrange = true;
+      pco_foreach_instr_src (psrc, instr) {
+         pco_instr *comp = pco_ref_is_ssa(*psrc) ? comp_defs[psrc->val] : NULL;
+         if (!comp || pco_ref_get_chans(*psrc) != 1 ||
+             pco_ref_has_mods_set(*psrc)) {
+            subrange = false;
+            break;
+         }
+
+         unsigned offset = pco_ref_get_imm(comp->src[1]);
+         if (!n) {
+            parent = comp->src[0];
+            base = offset;
+         } else if (comp->src[0].val != parent.val || offset != base + n) {
+            subrange = false;
+            break;
+         }
+         ++n;
+      }
+
+      if (!subrange || !n)
+         continue;
+
+      struct vec_override *alias = rzalloc_size(overrides, sizeof(*alias));
+      struct vec_override *parent_override =
+         _mesa_hash_table_u64_search(overrides, parent.val);
+      alias->ref = parent_override ? parent_override->ref : parent;
+      alias->offset = base + (parent_override ? parent_override->offset : 0);
+      _mesa_hash_table_u64_insert(overrides, instr->dest[0].val, alias);
+   }
+
    /* Overrides for vector component uses. */
    pco_foreach_instr_in_func (instr, func) {
       if (instr->op != PCO_OP_COMP)
@@ -1128,7 +1179,8 @@ static bool pco_ra_func(pco_func *func, pco_ra_ctx *ctx)
 
                   pco_ref_xfer_mods(&src, psrc, false);
 
-                  /* if (!pco_refs_are_equal(src, dest, true)) */ {
+                  if (!pco_refs_are_equal(src, dest, true) ||
+                      pco_ref_has_mods_set(src)) {
                      highest_temp =
                         MAX3(highest_temp,
                              pco_ref_is_temp(src) ? pco_ref_get_temp(src)
