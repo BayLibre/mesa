@@ -2972,6 +2972,19 @@ static void pvr_early_init_shader_data(pco_data *data,
    }
 }
 
+/**
+ * \brief Whether a fragment shader has no effect: it writes no output, can't
+ *        discard or demote and doesn't write memory, so the pipeline can run
+ *        as if it had none.
+ */
+static bool pvr_fs_is_empty(nir_shader *fs)
+{
+   nir_shader_gather_info(fs, nir_shader_get_entrypoint(fs));
+
+   return !fs->info.outputs_written && !fs->info.fs.uses_discard &&
+          !fs->info.writes_memory && !fs->info.fs.uses_sample_shading;
+}
+
 static bool pvr_build_fs_passthrough(bool no_fragment_shader,
                                      const struct pvr_device_info *dev_info)
 {
@@ -3113,12 +3126,18 @@ pvr_graphics_pipeline_compile(struct pvr_device *const device,
       consumer = nir_shaders[stage];
    }
 
-   /* Check if the fragment passthrough shader should be built. */
+   /* Check if the fragment passthrough shader should be built. An empty
+    * fragment shader is replaced by it too, so that draws can skip fragment
+    * shading entirely, as with no fragment shader.
+    */
+   nir_shader *fs_nir = nir_shaders[MESA_SHADER_FRAGMENT];
    build_fs_passthrough =
-      pvr_build_fs_passthrough(!nir_shaders[MESA_SHADER_FRAGMENT],
+      pvr_build_fs_passthrough(!fs_nir || pvr_fs_is_empty(fs_nir),
                                &device->pdevice->dev_info);
 
    if (build_fs_passthrough) {
+      shader_data[MESA_SHADER_FRAGMENT] = (pco_data){ 0 };
+
       nir_shader *fs_pass = pvr_usc_fs_pfo_passthrough_nir(pco_ctx);
       ralloc_steal(shader_mem_ctx, fs_pass);
       nir_shaders[MESA_SHADER_FRAGMENT] = fs_pass;
