@@ -393,8 +393,12 @@ static inline bool can_fwd_prop_src(const pco_instr *to_instr,
     * feature/arch-agnostic.
     */
 
+   /* Pixel output reads need the output latency check, which the
+    * instruction then has to carry itself.
+    */
    if (pco_ref_is_reg(*from) &&
-       pco_ref_get_reg_class(*from) == PCO_REG_CLASS_PIXOUT) {
+       pco_ref_get_reg_class(*from) == PCO_REG_CLASS_PIXOUT &&
+       !pco_instr_has_olchk(to_instr)) {
       return false;
    }
 
@@ -446,6 +450,7 @@ static inline bool other_src_is_imm(pco_instr **writes,
 
 static inline bool try_fwd_prop_instr(pco_instr **writes,
                                       const BITSET_WORD *other_reads,
+                                      bool pixout_written,
                                       pco_instr *instr)
 {
    bool progress = false;
@@ -454,6 +459,15 @@ static inline bool try_fwd_prop_instr(pco_instr **writes,
       pco_instr *parent_instr = writes[psrc->val];
 
       if (!parent_instr)
+         continue;
+
+      /* A pixel output read must not move past a write to the outputs. */
+      pco_ref parent_src = parent_instr->num_srcs ? parent_instr->src[0]
+                                                  : pco_ref_null();
+      if (pco_ref_is_reg(parent_src) &&
+          pco_ref_get_reg_class(parent_src) == PCO_REG_CLASS_PIXOUT &&
+          (pixout_written ||
+           parent_instr->parent_block != instr->parent_block))
          continue;
 
       /* Only fold shared register copies into instructions that read shared
@@ -527,12 +541,20 @@ static inline bool pco_opt_fwd_prop(pco_shader *shader)
          }
       }
 
+      bool pixout_written = false;
       pco_foreach_instr_in_func (instr, func) {
          pco_foreach_instr_dest_ssa (pdest, instr) {
             writes[pdest->val] = instr;
          }
 
-         progress |= try_fwd_prop_instr(writes, other_reads, instr);
+         progress |=
+            try_fwd_prop_instr(writes, other_reads, pixout_written, instr);
+
+         pco_foreach_instr_dest (pdest, instr) {
+            if (pco_ref_is_reg(*pdest) &&
+                pco_ref_get_reg_class(*pdest) == PCO_REG_CLASS_PIXOUT)
+               pixout_written = true;
+         }
       }
 
       ralloc_free(writes);
