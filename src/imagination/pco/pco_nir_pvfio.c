@@ -1194,22 +1194,33 @@ static bool lower_front_face(nir_builder *b, nir_intrinsic_instr *intr)
    return true;
 }
 
-static bool lower_sample_mask_in(nir_builder *b, nir_intrinsic_instr *intr)
+static bool lower_sample_mask_in(nir_builder *b,
+                                 nir_intrinsic_instr *intr,
+                                 bool trivial_ms)
 {
-   nir_def *mask =
-      nir_ubitfield_extract_imm(b,
-                                nir_load_fs_meta_pco(b),
-                                PVR_FS_META_SAMPLE_MASK_OFFSET,
-                                PVR_FS_META_SAMPLE_MASK_LENGTH);
-   mask = nir_iand(b, mask, nir_load_savmsk_vm_pco(b));
+   nir_def *mask = nir_load_savmsk_vm_pco(b);
+
+   /* With a single sample and a static sample mask covering it, the API mask
+    * keeps the coverage as it is.
+    */
+   if (!trivial_ms) {
+      nir_def *api_mask =
+         nir_ubitfield_extract_imm(b,
+                                   nir_load_fs_meta_pco(b),
+                                   PVR_FS_META_SAMPLE_MASK_OFFSET,
+                                   PVR_FS_META_SAMPLE_MASK_LENGTH);
+      mask = nir_iand(b, api_mask, mask);
+   }
    nir_def_rewrite_uses(&intr->def, mask);
    nir_instr_remove(&intr->instr);
    return true;
 }
 
 static bool
-lower_fs_intr(nir_builder *b, nir_intrinsic_instr *intr, UNUSED void *cb_data)
+lower_fs_intr(nir_builder *b, nir_intrinsic_instr *intr, void *cb_data)
 {
+   const bool *trivial_ms = cb_data;
+
    b->cursor = nir_before_instr(&intr->instr);
 
    switch (intr->intrinsic) {
@@ -1217,7 +1228,7 @@ lower_fs_intr(nir_builder *b, nir_intrinsic_instr *intr, UNUSED void *cb_data)
       return lower_front_face(b, intr);
 
    case nir_intrinsic_load_sample_mask_in:
-      return lower_sample_mask_in(b, intr);
+      return lower_sample_mask_in(b, intr, *trivial_ms);
 
    /* Drop these, already handled by nir_lower_is_helper_invocation. */
    case nir_intrinsic_demote:
@@ -1232,14 +1243,14 @@ lower_fs_intr(nir_builder *b, nir_intrinsic_instr *intr, UNUSED void *cb_data)
    return false;
 }
 
-bool pco_nir_lower_fs_intrinsics(nir_shader *shader)
+bool pco_nir_lower_fs_intrinsics(nir_shader *shader, bool trivial_ms)
 {
    assert(shader->info.stage == MESA_SHADER_FRAGMENT);
 
    return nir_shader_intrinsics_pass(shader,
                                      lower_fs_intr,
                                      nir_metadata_control_flow,
-                                     NULL);
+                                     &trivial_ms);
 }
 
 static bool

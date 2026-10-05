@@ -1242,7 +1242,10 @@ void pco_lower_nir(pco_ctx *ctx, nir_shader *nir, pco_data *data)
          NIR_PASS(_, nir, pco_nir_lower_sample_mask_out, data->fs.trivial_ms);
       NIR_PASS(_, nir, pco_nir_pfo, &data->fs);
       NIR_PASS(_, nir, nir_lower_is_helper_invocation);
-      NIR_PASS(_, nir, pco_nir_lower_fs_intrinsics);
+      NIR_PASS(_,
+               nir,
+               pco_nir_lower_fs_intrinsics,
+               !internal && data->fs.trivial_ms);
    } else if (nir->info.stage == MESA_SHADER_VERTEX) {
       NIR_PASS(_,
                nir,

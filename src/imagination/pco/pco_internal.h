@@ -1835,7 +1835,7 @@ bool pco_nir_lower_alu(nir_shader *shader);
 bool pco_nir_lower_atomics(nir_shader *shader, pco_data *data);
 bool pco_nir_lower_barriers(nir_shader *shader, pco_data *data);
 void pco_nir_lower_clip_cull_vars(nir_shader *shader);
-bool pco_nir_lower_fs_intrinsics(nir_shader *shader);
+bool pco_nir_lower_fs_intrinsics(nir_shader *shader, bool trivial_ms);
 bool pco_nir_lower_vs_intrinsics(nir_shader *shader);
 bool pco_nir_lower_images(nir_shader *shader, pco_data *data, pco_ctx *ctx);
 bool pco_nir_lower_interpolation(nir_shader *shader, pco_fs_data *fs);
