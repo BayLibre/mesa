@@ -53,6 +53,7 @@ void pco_process_ir(pco_ctx *ctx, pco_shader *shader)
     * time a drc result is used.
     */
    PCO_PASS(_, shader, pco_shared_imms);
+   PCO_PASS(_, shader, pco_hoist_samples);
    PCO_PASS(_, shader, pco_schedule);
    PCO_PASS(_, shader, pco_pre_ra_legalize);
    PCO_PASS(_, shader, pco_reuse_imms);

@@ -303,6 +303,137 @@ bool pco_defer_waits(pco_shader *shader)
    return progress;
 }
 
+/** Maximum number of samples a hoisted sample may move above. */
+#define PCO_HOIST_MAX_SAMPLES_IN_FLIGHT 4
+
+/**
+ * \brief Returns whether a sample may be moved above an instruction.
+ */
+static bool can_hoist_above(pco_instr *instr)
+{
+   switch (instr->op) {
+   case PCO_OP_WDF:
+   case PCO_OP_IDF:
+   case PCO_OP_FENCE:
+   case PCO_OP_BR:
+   case PCO_OP_BR_NEXT:
+   case PCO_OP_BR_SKIP_NEXT:
+   case PCO_OP_BREAK:
+   case PCO_OP_CONTINUE:
+   case PCO_OP_MUTEX:
+   case PCO_OP_CNDST:
+   case PCO_OP_CNDEF:
+   case PCO_OP_CNDSM:
+   case PCO_OP_CNDLT:
+   case PCO_OP_CNDEND:
+   case PCO_OP_SAVMSK:
+   case PCO_OP_SETL:
+   case PCO_OP_SAVL:
+   case PCO_OP_ALPHATST:
+   case PCO_OP_ALPHAF:
+   case PCO_OP_DEPTHF:
+   case PCO_OP_EMITPIX:
+   case PCO_OP_FLUSH_P0:
+   case PCO_OP_FLUSH_DMA:
+   case PCO_OP_VOTE:
+   case PCO_OP_DITR:
+   case PCO_OP_DITRP:
+   case PCO_OP_DITRP_WRITE:
+   case PCO_OP_DITRP_READ:
+   case PCO_OP_FITR:
+   case PCO_OP_FITRP:
+   case PCO_OP_SMP_WRT:
+   case PCO_OP_SMP_WRT_DYNIDX:
+   case PCO_OP_FDSX:
+   case PCO_OP_FDSXF:
+   case PCO_OP_FDSY:
+   case PCO_OP_FDSYF:
+      return false;
+
+   default:
+      break;
+   }
+
+   if (pco_instr_has_exec_cnd(instr) &&
+       pco_instr_get_exec_cnd(instr) != PCO_EXEC_CND_E1_ZX)
+      return false;
+
+   if (pco_instr_has_end(instr) && pco_instr_get_end(instr))
+      return false;
+
+   pco_foreach_instr_src (psrc, instr) {
+      /* Stores, atomics and loads: keep memory order. */
+      if (pco_ref_is_drc(*psrc) && instr->op != PCO_OP_SMP)
+         return false;
+   }
+
+   return true;
+}
+
+static bool instr_defines_src_of(pco_instr *def, pco_instr *user)
+{
+   pco_foreach_instr_dest (pdest, def) {
+      pco_foreach_instr_src (psrc, user) {
+         if (pco_ref_is_ssa(*pdest) && pco_ref_is_ssa(*psrc) &&
+             pdest->val == psrc->val)
+            return true;
+
+         /* Non-SSA destinations: only move over them if unrelated. */
+         if (!pco_ref_is_ssa(*pdest) && !pco_ref_is_null(*pdest) &&
+             pco_ref_is_reg(*psrc))
+            return true;
+      }
+   }
+
+   return false;
+}
+
+/**
+ * \brief Moves texture samples up to just after the definitions of their
+ * sources, so that independent samples, such as the taps of a filter, are in
+ * flight together once their waits are deferred.
+ *
+ * \param[in,out] shader PCO shader.
+ * \return True if the pass made progress.
+ */
+bool pco_hoist_samples(pco_shader *shader)
+{
+   bool progress = false;
+
+   pco_foreach_func_in_shader (func, shader) {
+      pco_foreach_block_in_func (block, func) {
+         pco_foreach_instr_in_block_safe (instr, block) {
+            if (instr->op != PCO_OP_SMP)
+               continue;
+
+            pco_instr *target = NULL;
+            unsigned samples_passed = 0;
+
+            for (pco_instr *prev = pco_prev_instr(instr); prev;
+                 prev = pco_prev_instr(prev)) {
+               if (!can_hoist_above(prev) || instr_defines_src_of(prev, instr))
+                  break;
+
+               if (prev->op == PCO_OP_SMP &&
+                   ++samples_passed >= PCO_HOIST_MAX_SAMPLES_IN_FLIGHT)
+                  break;
+
+               target = prev;
+            }
+
+            if (!target)
+               continue;
+
+            list_del(&instr->link);
+            list_addtail(&instr->link, &target->link);
+            progress = true;
+         }
+      }
+   }
+
+   return progress;
+}
+
 /** How far back an immediate load can be reused, to bound register pressure. */
 #define PCO_IMM_REUSE_WINDOW 32
 
