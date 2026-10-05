@@ -68,8 +68,16 @@ static bool minmax_will_split(nir_alu_instr *minmax)
    if (parent->type != nir_instr_type_alu)
       return false;
 
+   nir_alu_instr *user = nir_instr_as_alu(parent);
+
+   /* fmin(fmin(a, b), c) feeding a split comparison: the outer split leaves
+    * a comparison against the inner fmin on the same side.
+    */
+   if (user->op == minmax->op && nir_alu_instr_is_nan_preserve(user))
+      return minmax_will_split(user);
+
    unsigned side;
-   return splittable_minmax(nir_instr_as_alu(parent), &side) == minmax;
+   return splittable_minmax(user, &side) == minmax;
 }
 
 /**
