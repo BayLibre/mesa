@@ -1449,3 +1449,173 @@ void pco_postprocess_nir(pco_ctx *ctx, nir_shader *nir, pco_data *data)
       nir_print_shader(nir, stdout);
    }
 }
+
+/* Fewest ALU instructions a preamble must take out of the shader. */
+#define PCO_PREAMBLE_MIN_ALU 16
+
+static void preamble_def_size(nir_def *def,
+                              unsigned *size,
+                              unsigned *align,
+                              nir_preamble_class *class_)
+{
+   *size = def->num_components * DIV_ROUND_UP(MAX2(def->bit_size, 32), 32);
+   *align = 1;
+   *class_ = nir_preamble_class_general;
+}
+
+static float preamble_instr_cost(nir_instr *instr, const void *data)
+{
+   switch (instr->type) {
+   case nir_instr_type_alu: {
+      nir_alu_instr *alu = nir_instr_as_alu(instr);
+      switch (alu->op) {
+      case nir_op_frcp:
+      case nir_op_frsq:
+      case nir_op_fsqrt:
+      case nir_op_fexp2:
+      case nir_op_flog2:
+      case nir_op_fsin:
+      case nir_op_fcos:
+      case nir_op_fdiv:
+         return 4.0f;
+
+      case nir_op_mov:
+      case nir_op_vec2:
+      case nir_op_vec3:
+      case nir_op_vec4:
+         return 0.0f;
+
+      default:
+         return alu->def.num_components;
+      }
+   }
+
+   case nir_instr_type_intrinsic:
+      switch (nir_instr_as_intrinsic(instr)->intrinsic) {
+      case nir_intrinsic_load_ubo:
+      case nir_intrinsic_load_global_constant:
+         return 2.0f;
+
+      default:
+         return 0.0f;
+      }
+
+   default:
+      return 0.0f;
+   }
+}
+
+static bool preamble_avoid_instr(const nir_instr *instr, const void *data)
+{
+   /* Shared registers hold 32-bit values; booleans in particular have no
+    * agreed representation across the preamble and the shader.
+    */
+   const nir_def *def = nir_instr_def((nir_instr *)instr);
+   return def && def->bit_size != 32;
+}
+
+static float preamble_rewrite_cost(nir_def *def, const void *data)
+{
+   /* A shared register may need a copy to reach its source slot. */
+   return def->num_components;
+}
+
+/**
+ * \brief Moves work that is uniform over a draw into a preamble.
+ *
+ * The preamble runs once per draw as a secondary USC program and leaves its
+ * results in shared registers placed after the ones already in use; the
+ * shader then reads them back like any other preloaded shared data.
+ *
+ * \param[in,out] nir NIR shader.
+ * \param[in] shared_base First free shared register.
+ * \param[in] max_size Maximum number of shared registers to use.
+ * \param[out] size Number of shared registers used by the preamble.
+ * \return True if a preamble was created.
+ */
+bool pco_nir_opt_preamble(nir_shader *nir,
+                          unsigned shared_base,
+                          unsigned max_size,
+                          unsigned *size)
+{
+   *size = 0;
+   if (!max_size)
+      return false;
+
+   const nir_opt_preamble_options options = {
+      .drawid_uniform = false,
+      .subgroup_size_uniform = true,
+      .def_size = preamble_def_size,
+      .preamble_storage_size = { [nir_preamble_class_general] = max_size },
+      .instr_cost_cb = preamble_instr_cost,
+      .rewrite_cost_cb = preamble_rewrite_cost,
+      .avoid_instr_cb = preamble_avoid_instr,
+   };
+
+   /* The preamble is an extra USC task per draw: only worth it when it takes
+    * a fair amount of ALU work out of every invocation. Try on a copy first.
+    */
+   nir_shader *trial = nir_shader_clone(NULL, nir);
+   unsigned trial_size;
+   unsigned alu_moved = 0;
+   if (nir_opt_preamble(trial, &options, &trial_size) && trial_size) {
+      nir_foreach_block (block, nir_shader_get_preamble(trial)) {
+         nir_foreach_instr (instr, block) {
+            if (instr->type == nir_instr_type_alu)
+               alu_moved += preamble_instr_cost(instr, NULL) > 0.0f;
+         }
+      }
+   }
+   ralloc_free(trial);
+
+   if (alu_moved < PCO_PREAMBLE_MIN_ALU)
+      return false;
+
+   nir_function_impl *entry = nir_shader_get_entrypoint(nir);
+
+   /* Remember the shared register loads that were already there. */
+   struct set *old_loads = _mesa_pointer_set_create(NULL);
+   nir_foreach_block (block, entry) {
+      nir_foreach_instr (instr, block) {
+         if (instr->type == nir_instr_type_intrinsic &&
+             nir_instr_as_intrinsic(instr)->intrinsic ==
+                nir_intrinsic_load_preamble)
+            _mesa_set_add(old_loads, instr);
+      }
+   }
+
+   bool progress = nir_opt_preamble(nir, &options, size);
+   if (!progress || !*size) {
+      _mesa_set_destroy(old_loads, NULL);
+      *size = 0;
+      return progress;
+   }
+
+   /* Move the preamble outputs after the shared registers in use. */
+   nir_foreach_block (block, entry) {
+      nir_foreach_instr (instr, block) {
+         if (instr->type != nir_instr_type_intrinsic)
+            continue;
+
+         nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
+         if (intr->intrinsic == nir_intrinsic_load_preamble &&
+             !_mesa_set_search(old_loads, instr))
+            nir_intrinsic_set_base(intr, nir_intrinsic_base(intr) + shared_base);
+      }
+   }
+
+   nir_function_impl *preamble = nir_shader_get_preamble(nir);
+   nir_foreach_block (block, preamble) {
+      nir_foreach_instr (instr, block) {
+         if (instr->type != nir_instr_type_intrinsic)
+            continue;
+
+         nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
+         if (intr->intrinsic == nir_intrinsic_store_preamble)
+            nir_intrinsic_set_base(intr, nir_intrinsic_base(intr) + shared_base);
+      }
+   }
+
+   _mesa_set_destroy(old_loads, NULL);
+   return true;
+}

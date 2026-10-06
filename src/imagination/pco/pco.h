@@ -46,6 +46,10 @@ void pco_link_nir(pco_ctx *ctx,
 void pco_rev_link_nir(pco_ctx *ctx, nir_shader *producer, nir_shader *consumer);
 void pco_lower_nir(pco_ctx *ctx, nir_shader *nir, pco_data *data);
 void pco_postprocess_nir(pco_ctx *ctx, nir_shader *nir, pco_data *data);
+bool pco_nir_opt_preamble(nir_shader *nir,
+                          unsigned shared_base,
+                          unsigned max_size,
+                          unsigned *size);
 
 pco_shader *
 pco_trans_nir(pco_ctx *ctx, nir_shader *nir, pco_data *data, void *mem_ctx);
