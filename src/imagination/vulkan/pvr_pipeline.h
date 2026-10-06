@@ -59,9 +59,18 @@ struct pvr_stage_allocation_descriptor_state {
    struct pvr_suballoc_bo *static_consts;
 };
 
+/* Per-draw preamble run as the descriptor program's secondary task. */
+struct pvr_preamble_state {
+   struct pvr_suballoc_bo *bo;
+   uint32_t entry_offset;
+   uint32_t temps;
+};
+
 struct pvr_vertex_shader_state {
    /* Pointer to a buffer object that contains the shader binary. */
    struct pvr_suballoc_bo *shader_bo;
+
+   struct pvr_preamble_state preamble;
 
    struct pvr_pds_attrib_program
       pds_attrib_programs[PVR_PDS_VERTEX_ATTRIB_PROGRAM_COUNT];

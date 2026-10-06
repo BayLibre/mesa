@@ -484,6 +484,8 @@ static VkResult pvr_pds_descriptor_program_create_and_upload(
    const struct vk_pipeline_layout *const layout,
    mesa_shader_stage stage,
    pco_data *data,
+   const struct pvr_suballoc_bo *secondary_bo,
+   uint32_t secondary_temps,
    struct pvr_stage_allocation_descriptor_state *const descriptor_state)
 {
    const size_t const_entries_size_in_bytes = PVR_PDS_MAX_DESC_UPLOAD_BYTES;
@@ -542,6 +544,15 @@ static VkResult pvr_pds_descriptor_program_create_and_upload(
    if (!pds_info->entries) {
       result = vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
       goto err_free_static_consts;
+   }
+
+   if (secondary_bo) {
+      program.secondary_program_present = true;
+      pvr_pds_setup_doutu(&program.secondary_task_control,
+                          0,
+                          secondary_temps,
+                          ROGUE_PDSINST_DOUTU_SAMPLE_RATE_INSTANCE,
+                          false);
    }
 
    if (data->common.push_consts.range.count > 0) {
@@ -1149,6 +1160,8 @@ static VkResult pvr_compute_pipeline_compile(
       layout,
       MESA_SHADER_COMPUTE,
       &compute_pipeline->cs_data,
+      NULL,
+      0,
       &compute_pipeline->descriptor_state);
    if (result != VK_SUCCESS)
       goto err_free_coeff_update_shader;
@@ -1342,6 +1355,7 @@ pvr_graphics_pipeline_destroy(struct pvr_device *const device,
             fragment_state->pds_coeff_program_buffer);
 
    pvr_bo_suballoc_free(gfx_pipeline->shader_state.fragment.shader_bo);
+   pvr_bo_suballoc_free(gfx_pipeline->shader_state.vertex.preamble.bo);
    pvr_bo_suballoc_free(gfx_pipeline->shader_state.vertex.shader_bo);
 
    pvr_pipeline_finish(device, &gfx_pipeline->base);
@@ -2993,6 +3007,72 @@ static bool pvr_build_fs_passthrough(bool no_fragment_shader,
    return is_arch_rogue && no_fragment_shader;
 }
 
+static VkResult pvr_upload_preamble(struct pvr_device *device,
+                                    pco_ctx *pco_ctx,
+                                    nir_shader *nir,
+                                    pco_data *data,
+                                    void *mem_ctx,
+                                    uint32_t cache_line_size,
+                                    struct pvr_preamble_state *preamble)
+{
+   if (!nir)
+      return VK_SUCCESS;
+
+   pco_shader *pco = pco_compile_nir(pco_ctx, nir, data, mem_ctx);
+   if (!pco)
+      return VK_ERROR_INITIALIZATION_FAILED;
+
+   preamble->temps = pco_shader_data(pco)->common.temps;
+   preamble->entry_offset = pco_shader_data(pco)->common.entry_offset;
+
+   return pvr_gpu_upload_usc(device,
+                             pco_shader_binary_data(pco),
+                             pco_shader_binary_size(pco),
+                             cache_line_size,
+                             &preamble->bo);
+}
+
+/* Most shared registers a vertex shader preamble may take. */
+#define PVR_VS_PREAMBLE_MAX_SHAREDS 160U
+
+/* Moves the preamble created by pco_nir_opt_preamble() into a shader of its
+ * own, to be run as a compute-like secondary program.
+ */
+static nir_shader *pvr_split_preamble(nir_shader *nir, void *mem_ctx)
+{
+   nir_shader *preamble = nir_shader_clone(mem_ctx, nir);
+
+   nir_foreach_function_safe (func, preamble) {
+      if (func->is_preamble) {
+         func->is_preamble = false;
+         func->is_entrypoint = true;
+      } else if (func->is_entrypoint) {
+         func->is_entrypoint = false;
+         if (func->impl)
+            func->impl->preamble = NULL;
+         exec_node_remove(&func->node);
+      }
+   }
+
+   nir_foreach_variable_with_modes_safe (var,
+                                         preamble,
+                                         nir_var_shader_in |
+                                            nir_var_shader_out) {
+      exec_node_remove(&var->node);
+   }
+
+   preamble->info.stage = MESA_SHADER_COMPUTE;
+   preamble->info.workgroup_size[0] = 1;
+   preamble->info.workgroup_size[1] = 1;
+   preamble->info.workgroup_size[2] = 1;
+
+   nir_function_impl *entry = nir_shader_get_entrypoint(nir);
+   exec_node_remove(&entry->preamble->node);
+   entry->preamble = NULL;
+
+   return preamble;
+}
+
 /* Compiles and uploads shaders and PDS programs. */
 static VkResult
 pvr_graphics_pipeline_compile(struct pvr_device *const device,
@@ -3002,6 +3082,9 @@ pvr_graphics_pipeline_compile(struct pvr_device *const device,
                               struct pvr_graphics_pipeline *const gfx_pipeline,
                               const struct vk_graphics_pipeline_state *state)
 {
+   nir_shader *vs_preamble = NULL;
+   pco_data vs_preamble_data = { 0 };
+
    struct vk_pipeline_layout *layout = gfx_pipeline->base.layout;
    const uint32_t cache_line_size =
       pvr_get_slc_cache_line_size(&device->pdevice->dev_info);
@@ -3175,6 +3258,22 @@ pvr_graphics_pipeline_compile(struct pvr_device *const device,
                                   pCreateInfo,
                                   layout,
                                   &mrt_setup);
+
+      unsigned preamble_size;
+      if (stage == MESA_SHADER_VERTEX &&
+          shader_data[stage].common.shareds < PVR_VS_PREAMBLE_MAX_SHAREDS &&
+          pco_nir_opt_preamble(nir_shaders[stage],
+                               shader_data[stage].common.shareds,
+                               PVR_VS_PREAMBLE_MAX_SHAREDS -
+                                  shader_data[stage].common.shareds,
+                               &preamble_size) &&
+          preamble_size) {
+         vs_preamble = pvr_split_preamble(nir_shaders[stage], shader_mem_ctx);
+         vs_preamble_data.common = shader_data[stage].common;
+         shader_data[stage].common.shareds += preamble_size;
+         NIR_PASS(_, nir_shaders[stage], nir_opt_dce);
+         NIR_PASS(_, vs_preamble, nir_opt_dce);
+      }
    }
 
    if (!pCreateInfo->renderPass)
@@ -3234,6 +3333,16 @@ pvr_graphics_pipeline_compile(struct pvr_device *const device,
    if (result != VK_SUCCESS)
       goto err_free_build_context;
 
+   result = pvr_upload_preamble(device,
+                                pco_ctx,
+                                vs_preamble,
+                                &vs_preamble_data,
+                                shader_mem_ctx,
+                                cache_line_size,
+                                &vertex_state->preamble);
+   if (result != VK_SUCCESS)
+      goto err_free_vertex_bo;
+
    if (*fs) {
       pvr_fragment_state_save(gfx_pipeline, *fs);
       fragment_state->is_passthrough = build_fs_passthrough;
@@ -3289,6 +3398,8 @@ pvr_graphics_pipeline_compile(struct pvr_device *const device,
          layout,
          MESA_SHADER_FRAGMENT,
          &gfx_pipeline->fs_data,
+         NULL,
+         0,
          &fragment_state->descriptor_state);
       if (result != VK_SUCCESS)
          goto err_free_frag_program;
@@ -3315,6 +3426,8 @@ pvr_graphics_pipeline_compile(struct pvr_device *const device,
       layout,
       MESA_SHADER_VERTEX,
       &gfx_pipeline->vs_data,
+      vertex_state->preamble.bo,
+      vertex_state->preamble.temps,
       &vertex_state->descriptor_state);
    if (result != VK_SUCCESS)
       goto err_free_vertex_attrib_program;
@@ -3353,6 +3466,7 @@ err_free_coeff_program:
 err_free_fragment_bo:
    pvr_bo_suballoc_free(fragment_state->shader_bo);
 err_free_vertex_bo:
+   pvr_bo_suballoc_free(vertex_state->preamble.bo);
    pvr_bo_suballoc_free(vertex_state->shader_bo);
 err_free_build_context:
    ralloc_free(shader_mem_ctx);

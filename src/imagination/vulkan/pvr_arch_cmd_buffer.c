@@ -5724,6 +5724,30 @@ static VkResult pvr_setup_descriptor_mappings(
          break;
       }
 
+      case PVR_PDS_CONST_MAP_ENTRY_TYPE_DOUTU_ADDRESS: {
+         const struct pvr_const_map_entry_doutu_address *const doutu_addr =
+            (struct pvr_const_map_entry_doutu_address *)entries;
+         const struct pvr_preamble_state *const preamble =
+            &cmd_buffer->state.gfx_pipeline->shader_state.vertex.preamble;
+         uint64_t addr = 0ULL;
+
+         assert(stage == PVR_STAGE_ALLOCATION_VERTEX_GEOMETRY);
+         assert(preamble->bo);
+
+         pvr_set_usc_execution_address64(
+            &addr,
+            PVR_DEV_ADDR_OFFSET(preamble->bo->dev_addr, preamble->entry_offset)
+               .addr);
+
+         PVR_WRITE(qword_buffer,
+                   addr | doutu_addr->doutu_control,
+                   doutu_addr->const_offset,
+                   pds_info->data_size_in_dwords);
+
+         entries += sizeof(*doutu_addr);
+         break;
+      }
+
       case PVR_PDS_CONST_MAP_ENTRY_TYPE_DESCRIPTOR_SET: {
          const struct pvr_const_map_entry_descriptor_set *desc_set_entry =
             (struct pvr_const_map_entry_descriptor_set *)entries;
