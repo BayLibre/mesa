@@ -272,6 +272,17 @@ static inline bool try_back_prop_instr(struct pco_use *uses, pco_instr *instr)
    if (pco_ref_is_idx_reg(*pdest_from))
       return false;
 
+   /* Data-fenced results written straight to shared registers read back
+    * stale in the shader, so keep them in temporaries.
+    */
+   if (pco_ref_is_reg(*pdest_from) &&
+       pco_ref_get_reg_class(*pdest_from) == PCO_REG_CLASS_SHARED) {
+      pco_foreach_instr_src (psrc, instr) {
+         if (pco_ref_is_drc(*psrc))
+            return false;
+      }
+   }
+
    if (pco_ref_is_reg(*pdest_from) &&
        pco_ref_get_reg_class(*pdest_from) == PCO_REG_CLASS_PIXOUT) {
       if (instr->parent_block != use->instr->parent_block)
