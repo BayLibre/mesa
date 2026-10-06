@@ -662,6 +662,86 @@ static inline bool pco_opt_prop_hw_comps(pco_shader *shader)
  * \param[in,out] shader PCO shader.
  * \return True if the pass made progress.
  */
+static inline bool can_take_sat(const pco_instr *instr)
+{
+   switch (instr->op) {
+   case PCO_OP_FADD:
+   case PCO_OP_FMUL:
+   case PCO_OP_FMAD:
+      break;
+
+   default:
+      return false;
+   }
+
+   if (pco_instr_get_mod(instr, PCO_OP_MOD_SAT))
+      return false;
+
+   if (pco_instr_has_exec_cnd(instr) &&
+       pco_instr_get_exec_cnd(instr) != PCO_EXEC_CND_E1_ZX)
+      return false;
+
+   return !pco_instr_has_rpt(instr) || pco_instr_get_rpt(instr) <= 1;
+}
+
+/**
+ * \brief Folds a saturate into the instruction producing its source.
+ *
+ * fsat is translated as fadd.sat x, 0; when x comes from an fadd, fmul or
+ * fmad used only there, that instruction can saturate its own result.
+ *
+ * \param[in,out] shader PCO shader.
+ * \return True if the pass made progress.
+ */
+static inline bool pco_opt_fold_sat(pco_shader *shader)
+{
+   bool progress = false;
+
+   pco_foreach_func_in_shader (func, shader) {
+      unsigned *uses = rzalloc_array_size(NULL, sizeof(*uses), func->next_ssa);
+      pco_instr **defs =
+         rzalloc_array_size(uses, sizeof(*defs), func->next_ssa);
+
+      pco_foreach_instr_in_func (instr, func) {
+         pco_foreach_instr_src_ssa (psrc, instr)
+            ++uses[psrc->val];
+
+         pco_foreach_instr_dest_ssa (pdest, instr)
+            defs[pdest->val] = instr;
+      }
+
+      pco_foreach_instr_in_func_safe (instr, func) {
+         if (instr->op != PCO_OP_FADD ||
+             !pco_instr_get_mod(instr, PCO_OP_MOD_SAT))
+            continue;
+
+         pco_ref src = instr->src[0];
+         if (!pco_ref_is_ssa(src) || pco_ref_has_mods_set(src) ||
+             !pco_refs_are_equal(instr->src[1], pco_zero, true) ||
+             uses[src.val] != 1)
+            continue;
+
+         pco_instr *def = defs[src.val];
+         if (!def || def->parent_block != instr->parent_block ||
+             def->num_dests != 1 || !can_take_sat(def))
+            continue;
+
+         if (pco_instr_has_exec_cnd(instr) &&
+             pco_instr_get_exec_cnd(instr) != PCO_EXEC_CND_E1_ZX)
+            continue;
+
+         pco_instr_set_mod(def, PCO_OP_MOD_SAT, true);
+         def->dest[0] = instr->dest[0];
+         pco_instr_delete(instr);
+         progress = true;
+      }
+
+      ralloc_free(uses);
+   }
+
+   return progress;
+}
+
 bool pco_opt(pco_shader *shader)
 {
    bool progress = false;
@@ -669,6 +749,7 @@ bool pco_opt(pco_shader *shader)
 
    PCO_PASS(progress, shader, pco_opt_prep_mods, &ctx);
    PCO_PASS(progress, shader, pco_opt_back_prop);
+   PCO_PASS(progress, shader, pco_opt_fold_sat);
    PCO_PASS(progress, shader, pco_opt_fwd_prop);
    /* TODO: Track whether there are any comp instructions referencing hw
     * registers resulting from the previous passes, and only run
