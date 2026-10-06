@@ -247,6 +247,10 @@ static inline bool try_back_prop_instr(struct pco_use *uses, pco_instr *instr)
    if (instr->num_dests != 1 || !pco_ref_is_ssa(*pdest_to))
       return false;
 
+   /* Register allocation turns comps into aliases of their vector. */
+   if (instr->op == PCO_OP_COMP)
+      return false;
+
    struct pco_use *use = &uses[pdest_to->val];
    if (!use->instr)
       return false;
