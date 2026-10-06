@@ -1095,6 +1095,17 @@ void pco_lower_nir(pco_ctx *ctx, nir_shader *nir, pco_data *data)
 {
    bool internal = nir->info.internal;
 
+   /* Regroup inexact float math so that shared and uniform subexpressions
+    * get computed once.
+    */
+   NIR_PASS(_, nir, nir_opt_reassociate_matrix_mul);
+   nir_opt_reassociate_loop(nir, nir_reassociate_scalar_math |
+                                    nir_reassociate_cse_heuristic);
+   NIR_PASS(_, nir, nir_opt_algebraic);
+   NIR_PASS(_, nir, nir_opt_constant_folding);
+   NIR_PASS(_, nir, nir_opt_cse);
+   NIR_PASS(_, nir, nir_opt_dce);
+
    NIR_PASS(_,
             nir,
             nir_opt_access,
