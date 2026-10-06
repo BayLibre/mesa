@@ -1301,6 +1301,7 @@ void pco_lower_nir(pco_ctx *ctx, nir_shader *nir, pco_data *data)
    NIR_PASS(_, nir, nir_opt_dead_write_vars);
    NIR_PASS(_, nir, nir_opt_combine_stores, nir_var_all);
 
+   NIR_PASS(_, nir, pco_nir_expand_trig);
    pco_nir_opt(ctx, nir, data, true);
 
    NIR_PASS(_, nir, nir_opt_vectorize_io, nir_var_shader_in, false);

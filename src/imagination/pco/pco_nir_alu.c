@@ -16,6 +16,9 @@
 #include "compiler/nir/nir_builtin_builder.h"
 #include "nir_defines.h"
 #include "pco_internal.h"
+#include "util/bitset.h"
+#include "util/u_dynarray.h"
+#include <math.h>
 
 static nir_alu_instr *nan_preserve_minmax(nir_src *src, nir_op op)
 {
@@ -208,4 +211,184 @@ bool pco_nir_lower_alu(nir_shader *shader, bool late)
                               pco_nir_lower_alu_instr,
                               nir_metadata_control_flow,
                               &late);
+}
+
+struct trig_use {
+   nir_alu_instr *trig;
+   double c;
+};
+
+/* Returns the non-constant part of angle = ffma(a, b, #c) or fadd(y, #c). */
+static nir_alu_instr *trig_angle(nir_alu_instr *trig, double *c)
+{
+   if (trig->def.num_components != 1 || trig->def.bit_size != 32)
+      return NULL;
+
+   nir_def *src = trig->src[0].src.ssa;
+   if (nir_def_instr_type(src) != nir_instr_type_alu)
+      return NULL;
+
+   nir_alu_instr *angle = nir_instr_as_alu(nir_def_instr(src));
+   if (angle->def.num_components != 1)
+      return NULL;
+
+   /* Splitting ffma(a, b, c) rounds a * b on its own: only allowed when
+    * the source did not ask for an exact (non-contracted) evaluation.
+    */
+   if (nir_alu_instr_is_exact(angle) || nir_alu_instr_is_exact(trig))
+      return NULL;
+
+   unsigned const_src;
+   if (angle->op == nir_op_ffma)
+      const_src = 2;
+   else if (angle->op == nir_op_fadd)
+      const_src = nir_src_is_const(angle->src[1].src) ? 1 : 0;
+   else
+      return NULL;
+
+   if (!nir_src_is_const(angle->src[const_src].src))
+      return NULL;
+
+   for (unsigned s = 0; s < nir_op_infos[angle->op].num_inputs; ++s) {
+      if (s != const_src && nir_src_is_const(angle->src[s].src))
+         return NULL;
+   }
+
+   *c = nir_src_comp_as_float(angle->src[const_src].src,
+                              angle->src[const_src].swizzle[0]);
+   return angle;
+}
+
+/* Whether two angles have the same non-constant part. */
+static bool same_trig_base(nir_alu_instr *a, nir_alu_instr *b)
+{
+   if (a->op != b->op)
+      return false;
+
+   unsigned n = nir_op_infos[a->op].num_inputs;
+   for (unsigned s = 0; s < n; ++s) {
+      bool a_const = nir_src_is_const(a->src[s].src);
+      if (a_const != nir_src_is_const(b->src[s].src))
+         return false;
+
+      if (a_const)
+         continue;
+
+      if (a->src[s].src.ssa != b->src[s].src.ssa ||
+          a->src[s].swizzle[0] != b->src[s].swizzle[0])
+         return false;
+   }
+
+   return true;
+}
+
+static nir_def *trig_base(nir_builder *b, nir_alu_instr *angle)
+{
+   if (angle->op == nir_op_ffma)
+      return nir_fmul(b,
+                      nir_ssa_for_alu_src(b, angle, 0),
+                      nir_ssa_for_alu_src(b, angle, 1));
+
+   unsigned var_src = nir_src_is_const(angle->src[1].src) ? 0 : 1;
+   return nir_ssa_for_alu_src(b, angle, var_src);
+}
+
+/**
+ * \brief Shares sin/cos between angles that only differ by a constant.
+ *
+ * Each sin or cos costs a range reduction and a fsinc. With angles x + c_i,
+ * such as the spiral taps of an ambient occlusion kernel, sin(x) and cos(x)
+ * are computed once and every sin(x + c_i) / cos(x + c_i) becomes two
+ * multiply-adds with the constant sin(c_i) and cos(c_i).
+ *
+ * \param[in,out] shader NIR shader.
+ * \return True if the pass made progress.
+ */
+bool pco_nir_expand_trig(nir_shader *shader)
+{
+   bool progress = false;
+
+   nir_foreach_function_impl (impl, shader) {
+      nir_builder b = nir_builder_create(impl);
+
+      nir_foreach_block (block, impl) {
+         struct util_dynarray trigs;
+         util_dynarray_init(&trigs, NULL);
+
+         nir_foreach_instr (instr, block) {
+            if (instr->type != nir_instr_type_alu)
+               continue;
+
+            nir_alu_instr *alu = nir_instr_as_alu(instr);
+            if (alu->op != nir_op_fsin && alu->op != nir_op_fcos)
+               continue;
+
+            double c;
+            if (trig_angle(alu, &c))
+               util_dynarray_append(&trigs, ((struct trig_use){ alu, c }));
+         }
+
+         unsigned count = util_dynarray_num_elements(&trigs, struct trig_use);
+         struct trig_use *uses = util_dynarray_begin(&trigs);
+         BITSET_WORD *done = rzalloc_array(NULL, BITSET_WORD, BITSET_WORDS(count));
+
+         for (unsigned i = 0; i < count; ++i) {
+            if (BITSET_TEST(done, i))
+               continue;
+
+            double ci;
+            nir_alu_instr *angle = trig_angle(uses[i].trig, &ci);
+
+            unsigned group = 0;
+            for (unsigned j = i; j < count; ++j) {
+               double cj;
+               if (!BITSET_TEST(done, j) &&
+                   same_trig_base(angle, trig_angle(uses[j].trig, &cj)))
+                  ++group;
+            }
+
+            /* Two sin/cos are needed for the base anyway. */
+            if (group < 3)
+               continue;
+
+            b.cursor = nir_before_instr(&uses[i].trig->instr);
+            b.fp_math_ctrl = uses[i].trig->fp_math_ctrl;
+            nir_def *base = trig_base(&b, angle);
+            nir_def *s = nir_fsin(&b, base);
+            nir_def *k = nir_fcos(&b, base);
+
+            for (unsigned j = i; j < count; ++j) {
+               double cj;
+               nir_alu_instr *trig = uses[j].trig;
+               if (BITSET_TEST(done, j) ||
+                   !same_trig_base(angle, trig_angle(trig, &cj)))
+                  continue;
+
+               BITSET_SET(done, j);
+
+               b.cursor = nir_before_instr(&trig->instr);
+               nir_def *sc = nir_imm_float(&b, sin(cj));
+               nir_def *cc = nir_imm_float(&b, cos(cj));
+
+               /* sin(x + c) = sin x cos c + cos x sin c
+                * cos(x + c) = cos x cos c - sin x sin c
+                */
+               nir_def *res =
+                  trig->op == nir_op_fsin
+                     ? nir_ffma(&b, s, cc, nir_fmul(&b, k, sc))
+                     : nir_ffma(&b, k, cc, nir_fneg(&b, nir_fmul(&b, s, sc)));
+
+               nir_def_replace(&trig->def, res);
+               progress = true;
+            }
+         }
+
+         ralloc_free(done);
+         util_dynarray_fini(&trigs);
+      }
+
+      nir_progress(progress, impl, nir_metadata_control_flow);
+   }
+
+   return progress;
 }

@@ -1835,6 +1835,7 @@ bool pco_nir_lower_algebraic(nir_shader *shader);
 bool pco_nir_lower_algebraic_late(nir_shader *shader);
 bool pco_nir_lower_alpha_to_coverage(nir_shader *shader);
 bool pco_nir_lower_alu(nir_shader *shader, bool late);
+bool pco_nir_expand_trig(nir_shader *shader);
 bool pco_nir_lower_atomics(nir_shader *shader, pco_data *data);
 bool pco_nir_lower_barriers(nir_shader *shader, pco_data *data);
 void pco_nir_lower_clip_cull_vars(nir_shader *shader);
