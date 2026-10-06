@@ -669,9 +669,10 @@ static bool lower_isp_fb(nir_builder *b, struct pfo_state *state)
 
    /* Drop depth writes and discard cond if early fragment tests. */
    if (shader->info.fs.early_fragment_tests) {
+      /* Nothing to mask when nothing can be discarded. */
+      state->mask_discarded_stores = !!discard_cond;
       state->depth_feedback_src = NULL;
       discard_cond = NULL;
-      state->mask_discarded_stores = true;
    } else if (discard_cond && state->fs->discard_no_feedback &&
               !state->depth_feedback_src) {
       /* The masked stores keep the previous colours of discarded fragments,
