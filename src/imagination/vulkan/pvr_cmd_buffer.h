@@ -466,6 +466,15 @@ struct pvr_cmd_buffer_state {
 
    struct pvr_push_constants push_consts[PVR_STAGE_ALLOCATION_COUNT];
 
+   /* Spill and scratch memory is indexed by USC instance number, which only
+    * one task holds at a time, so shaders with the same block size can share
+    * it. Keyed by block size, holding the address of the info uploaded for it.
+    */
+   struct pvr_instance_buffer {
+      uint32_t block_size;
+      pvr_dev_addr_t info_addr;
+   } spill_bufs[4], scratch_bufs[4];
+
    VkFormat depth_format;
 
    struct {

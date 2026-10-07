@@ -5650,6 +5650,61 @@ static VkResult pvr_flush_push_descriptors(
    return VK_SUCCESS;
 }
 
+/* Returns the address of the {base_lo, base_hi, block_size} info of a
+ * buffer of block_size bytes per USC instance.
+ */
+static VkResult
+pvr_cmd_buffer_get_instance_buffer(struct pvr_cmd_buffer *cmd_buffer,
+                                   struct pvr_instance_buffer *cache,
+                                   unsigned cache_size,
+                                   uint32_t block_size,
+                                   pvr_dev_addr_t *info_addr_out)
+{
+   const struct pvr_device_info *dev_info =
+      &cmd_buffer->device->pdevice->dev_info;
+   struct pvr_suballoc_bo *buffer_bo;
+   struct pvr_suballoc_bo *info_bo;
+   VkResult result;
+   unsigned i;
+
+   for (i = 0; i < cache_size && cache[i].block_size; i++) {
+      if (cache[i].block_size == block_size) {
+         *info_addr_out = cache[i].info_addr;
+         return VK_SUCCESS;
+      }
+   }
+
+   result = pvr_arch_cmd_buffer_upload_general(
+      cmd_buffer,
+      NULL,
+      block_size * rogue_get_total_instance_count(dev_info),
+      &buffer_bo);
+   if (result != VK_SUCCESS)
+      return result;
+
+   uint32_t info[3] = {
+      [0] = buffer_bo->dev_addr.addr & 0xffffffff,
+      [1] = buffer_bo->dev_addr.addr >> 32,
+      [2] = block_size,
+   };
+
+   result =
+      pvr_arch_cmd_buffer_upload_general(cmd_buffer, info, sizeof(info), &info_bo);
+   if (result != VK_SUCCESS)
+      return result;
+
+   if (i < cache_size) {
+      cache[i] = (struct pvr_instance_buffer){
+         .block_size = block_size,
+         .info_addr = info_bo->dev_addr,
+      };
+   }
+
+   *info_addr_out = info_bo->dev_addr;
+
+   return VK_SUCCESS;
+}
+
 static VkResult pvr_setup_descriptor_mappings(
    struct pvr_cmd_buffer *const cmd_buffer,
    enum pvr_stage_allocation stage,
@@ -6089,72 +6144,39 @@ static VkResult pvr_setup_descriptor_mappings(
                data->common.spilled_temps * sizeof(uint32_t);
             spill_block_size = spill_block_size ? spill_block_size
                                                 : sizeof(uint32_t);
+            pvr_dev_addr_t spill_info_addr;
 
-            size_t total_spill_mem_size =
-               spill_block_size * rogue_get_total_instance_count(dev_info);
-            struct pvr_suballoc_bo *spill_buffer_bo;
-            result = pvr_arch_cmd_buffer_upload_general(cmd_buffer,
-                                                        NULL,
-                                                        total_spill_mem_size,
-                                                        &spill_buffer_bo);
-
-            if (result != VK_SUCCESS)
-               return result;
-
-            uint32_t spill_info[3] = {
-               [0] = spill_buffer_bo->dev_addr.addr & 0xffffffff,
-               [1] = spill_buffer_bo->dev_addr.addr >> 32,
-               [2] = spill_block_size,
-            };
-
-            struct pvr_suballoc_bo *spill_info_bo;
-            result = pvr_arch_cmd_buffer_upload_general(cmd_buffer,
-                                                        spill_info,
-                                                        sizeof(spill_info),
-                                                        &spill_info_bo);
-
+            result = pvr_cmd_buffer_get_instance_buffer(
+               cmd_buffer,
+               cmd_buffer->state.spill_bufs,
+               ARRAY_SIZE(cmd_buffer->state.spill_bufs),
+               spill_block_size,
+               &spill_info_addr);
             if (result != VK_SUCCESS)
                return result;
 
             PVR_WRITE(qword_buffer,
-                      spill_info_bo->dev_addr.addr,
+                      spill_info_addr.addr,
                       special_buff_entry->const_offset,
                       pds_info->data_size_in_dwords);
             break;
          }
 
          case PVR_BUFFER_TYPE_SCRATCH_INFO: {
+            pvr_dev_addr_t scratch_info_addr;
+
             assert(data->common.scratch);
-            unsigned scratch_block_size = data->common.scratch;
-
-            size_t total_scratch_mem_size =
-               scratch_block_size * rogue_get_total_instance_count(dev_info);
-            struct pvr_suballoc_bo *scratch_buffer_bo;
-            result = pvr_arch_cmd_buffer_upload_general(cmd_buffer,
-                                                        NULL,
-                                                        total_scratch_mem_size,
-                                                        &scratch_buffer_bo);
-
-            if (result != VK_SUCCESS)
-               return result;
-
-            uint32_t scratch_info[3] = {
-               [0] = scratch_buffer_bo->dev_addr.addr & 0xffffffff,
-               [1] = scratch_buffer_bo->dev_addr.addr >> 32,
-               [2] = scratch_block_size,
-            };
-
-            struct pvr_suballoc_bo *scratch_info_bo;
-            result = pvr_arch_cmd_buffer_upload_general(cmd_buffer,
-                                                        scratch_info,
-                                                        sizeof(scratch_info),
-                                                        &scratch_info_bo);
-
+            result = pvr_cmd_buffer_get_instance_buffer(
+               cmd_buffer,
+               cmd_buffer->state.scratch_bufs,
+               ARRAY_SIZE(cmd_buffer->state.scratch_bufs),
+               data->common.scratch,
+               &scratch_info_addr);
             if (result != VK_SUCCESS)
                return result;
 
             PVR_WRITE(qword_buffer,
-                      scratch_info_bo->dev_addr.addr,
+                      scratch_info_addr.addr,
                       special_buff_entry->const_offset,
                       pds_info->data_size_in_dwords);
             break;
