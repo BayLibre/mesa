@@ -183,8 +183,11 @@ VkResult pvr_spm_scratch_buffer_get_buffer(
     * Thus we can safely use the same scratch buffer across multiple
     * framebuffers as the scratch buffer is only used during PRs and only one PR
     * can ever be executed at any one time.
+    * For the same reason a larger buffer can serve a smaller framebuffer, so
+    * applications alternating between render sizes don't reallocate it on
+    * every render.
     */
-   if (store->head_ref && store->head_ref->size == size) {
+   if (store->head_ref && store->head_ref->size >= size) {
       buffer = store->head_ref;
    } else {
       VkResult result;
