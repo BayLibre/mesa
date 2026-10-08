@@ -143,8 +143,14 @@ static inline bool pco_opt_prep_mods(pco_shader *shader,
             UNREACHABLE("");
          }
 
+         /* A modifier applied to a pixel output read keeps its output
+          * latency check.
+          */
          pco_builder b = pco_builder_create(func, pco_cursor_before_instr(mod));
-         pco_instr *mov = pco_mov(&b, mod->dest[0], src);
+         pco_instr *mov = pco_mov(&b,
+                                  mod->dest[0],
+                                  src,
+                                  .olchk = pco_instr_get_olchk(mod));
          util_dynarray_append(&ctx->mods, mov);
          pco_instr_delete(mod);
 
@@ -173,10 +179,11 @@ static inline bool pco_opt_lower_mods(pco_shader *shader,
       pco_builder b =
          pco_builder_create(mod->parent_func, pco_cursor_before_instr(mod));
 
+      bool olchk = pco_instr_get_olchk(mod);
       if (mod->src[0].flr)
-         pco_fadd(&b, mod->dest[0], mod->src[0], pco_nzero);
+         pco_fadd(&b, mod->dest[0], mod->src[0], pco_nzero, .olchk = olchk);
       else
-         pco_mbyp(&b, mod->dest[0], mod->src[0]);
+         pco_mbyp(&b, mod->dest[0], mod->src[0], .olchk = olchk);
 
       pco_instr_delete(mod);
 
