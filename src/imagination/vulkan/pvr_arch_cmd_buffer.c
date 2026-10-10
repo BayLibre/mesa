@@ -5739,6 +5739,7 @@ static VkResult pvr_setup_descriptor_mappings(
    qword_buffer = (uint64_t *)pvr_bo_suballoc_get_map_addr(pvr_bo);
 
    entries = (uint8_t *)pds_info->entries;
+   uint32_t dma_dwords_override = 0;
 
    switch (stage) {
    case PVR_STAGE_ALLOCATION_VERTEX_GEOMETRY:
@@ -5769,9 +5770,19 @@ static VkResult pvr_setup_descriptor_mappings(
       case PVR_PDS_CONST_MAP_ENTRY_TYPE_LITERAL32: {
          const struct pvr_const_map_entry_literal32 *const literal =
             (struct pvr_const_map_entry_literal32 *)entries;
+         uint32_t value = literal->literal_value;
+
+         /* The DOUTD control word follows its buffer's address entry. */
+         if (dma_dwords_override) {
+            value = (value &
+                     PVR_ROGUE_PDSINST_DOUT_FIELDS_DOUTD_SRC1_BSIZE_CLRMSK) |
+                    (dma_dwords_override
+                     << PVR_ROGUE_PDSINST_DOUT_FIELDS_DOUTD_SRC1_BSIZE_SHIFT);
+            dma_dwords_override = 0;
+         }
 
          PVR_WRITE(dword_buffer,
-                   literal->literal_value,
+                   value,
                    literal->const_offset,
                    pds_info->data_size_in_dwords);
 
@@ -5851,16 +5862,27 @@ static VkResult pvr_setup_descriptor_mappings(
             assert(descriptor_set);
             assert(binding < descriptor_set->layout->binding_count);
 
-            memcpy(&buffer_desc,
-                   (uint8_t *)descriptor_set->mapping +
-                      descriptor_set->layout->bindings[binding].offset,
-                   sizeof(buffer_desc));
+            const struct pvr_descriptor_set_layout_binding *layout_binding =
+               &descriptor_set->layout->bindings[binding];
+            if (layout_binding->dynamic_buffer_idx != ~0U) {
+               buffer_desc =
+                  descriptor_set->dynamic_buffers[layout_binding->dynamic_buffer_idx];
+               if (buffer_desc.addr)
+                  buffer_desc.addr += buffer_desc.offset;
+            } else {
+               memcpy(&buffer_desc,
+                      (uint8_t *)descriptor_set->mapping + layout_binding->offset,
+                      sizeof(buffer_desc));
+            }
 
-            /* A null descriptor reads as zeros, and a range smaller than
-             * what the shader reads is undefined: preload zeros rather than
-             * let the DMA run past the buffer.
+            /* Only preload the bound range: the shader reads the dwords past
+             * it as zeros with robust buffer access, and they are undefined
+             * otherwise. A null descriptor reads as zeros.
              */
-            if (!buffer_desc.addr || buffer_desc.size < size) {
+            if (buffer_desc.addr && buffer_desc.size < size &&
+                buffer_desc.size >= sizeof(uint32_t)) {
+               dma_dwords_override = buffer_desc.size / sizeof(uint32_t);
+            } else if (!buffer_desc.addr || buffer_desc.size < size) {
                struct pvr_suballoc_bo *zero_bo;
 
                result = pvr_arch_cmd_buffer_upload_general(cmd_buffer,

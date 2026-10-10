@@ -181,6 +181,9 @@ typedef struct _pco_binding_data {
 
    /** Whether the descriptor binding is an inline uniform block. */
    bool is_inline_ubo;
+
+   /** Whether the start of the buffer can be preloaded into shared registers. */
+   bool preloadable;
 } pco_binding_data;
 
 /** PCO descriptor set data. */
@@ -228,6 +231,12 @@ typedef struct _pco_common_data {
 
    pco_ubo_preload ubo_preloads[PCO_MAX_UBO_PRELOADS];
    unsigned ubo_preload_count;
+   unsigned ubo_preload_budget; /** Dwords the preloads may use. */
+
+   /** Whether the preload sizes were set before the robustness lowerings,
+    * which leave the preloaded loads alone.
+    */
+   bool ubo_preloads_planned;
 
    /** Shared registers holding immediates, loaded by the descriptor upload
     * program from shared_imm_vals.

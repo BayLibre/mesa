@@ -366,6 +366,11 @@ static inline bool is_inline_ubo(unsigned desc_set,
                                  unsigned binding,
                                  const pco_common_data *common);
 
+static void add_ubo_preload_load(pco_common_data *common,
+                                 unsigned desc_set,
+                                 unsigned binding,
+                                 unsigned end);
+
 /* Records how far into the buffer a uniform buffer load at a constant offset
  * of element 0 reads, so the start of that buffer can be preloaded.
  */
@@ -390,7 +395,14 @@ static void gather_ubo_preload_data(nir_intrinsic_instr *intr,
       return;
 
    unsigned end = offset / sizeof(uint32_t) + intr->def.num_components;
+   add_ubo_preload_load(common, desc_set, binding, end);
+}
 
+static void add_ubo_preload_load(pco_common_data *common,
+                                 unsigned desc_set,
+                                 unsigned binding,
+                                 unsigned end)
+{
    pco_ubo_preload *preload = NULL;
    for (unsigned u = 0; u < common->ubo_preload_count; ++u) {
       if (common->ubo_preloads[u].desc_set == desc_set &&
@@ -415,6 +427,224 @@ static void gather_ubo_preload_data(nir_intrinsic_instr *intr,
    preload->loads++;
 }
 
+/* A storage buffer the shader never writes can only change between draws,
+ * like a uniform buffer.
+ */
+static bool is_preload_candidate(const nir_shader *shader,
+                                 const nir_intrinsic_instr *intr)
+{
+   if (intr->intrinsic == nir_intrinsic_load_ubo)
+      return true;
+
+   return intr->intrinsic == nir_intrinsic_load_ssbo &&
+          !shader->info.writes_memory &&
+          !(nir_intrinsic_access(intr) & (ACCESS_VOLATILE | ACCESS_COHERENT));
+}
+
+/* The binding of a buffer load still addressed through a Vulkan resource
+ * index, if it is element 0 of a binding.
+ */
+static bool buffer_load_binding(const nir_intrinsic_instr *intr,
+                                unsigned *desc_set,
+                                unsigned *binding)
+{
+   nir_scalar scalar = nir_scalar_resolved(intr->src[0].ssa, 0);
+   if (!nir_scalar_is_intrinsic(scalar))
+      return false;
+
+   nir_intrinsic_instr *load_vk_desc = nir_scalar_as_intrinsic(scalar);
+   if (load_vk_desc->intrinsic != nir_intrinsic_load_vulkan_descriptor)
+      return false;
+
+   nir_intrinsic_instr *vk_res_idx = nir_src_as_intrinsic(load_vk_desc->src[0]);
+   if (!vk_res_idx ||
+       vk_res_idx->intrinsic != nir_intrinsic_vulkan_resource_index ||
+       !nir_src_is_const(vk_res_idx->src[0]) ||
+       nir_src_as_uint(vk_res_idx->src[0])) {
+      return false;
+   }
+
+   *desc_set = nir_intrinsic_desc_set(vk_res_idx);
+   *binding = nir_intrinsic_binding(vk_res_idx);
+   return true;
+}
+
+/* The constant byte offset of a buffer load still addressed through a Vulkan
+ * descriptor, whose own offset component is always zero here.
+ */
+static bool buffer_load_const_offset(nir_scalar s, unsigned *offset)
+{
+   s = nir_scalar_chase_movs(s);
+
+   if (nir_scalar_is_const(s)) {
+      *offset = nir_scalar_as_uint(s);
+      return true;
+   }
+
+   if (nir_scalar_is_intrinsic(s) &&
+       nir_scalar_intrinsic_op(s) == nir_intrinsic_load_vulkan_descriptor &&
+       s.comp == 2) {
+      *offset = 0;
+      return true;
+   }
+
+   if (nir_scalar_is_alu(s) && nir_scalar_alu_op(s) == nir_op_iadd) {
+      unsigned a, b;
+      if (!buffer_load_const_offset(nir_scalar_chase_alu_src(s, 0), &a) ||
+          !buffer_load_const_offset(nir_scalar_chase_alu_src(s, 1), &b)) {
+         return false;
+      }
+
+      *offset = a + b;
+      return true;
+   }
+
+   return false;
+}
+
+/* The preload covering a load still addressed through a Vulkan resource
+ * index, if any.
+ */
+static const pco_ubo_preload *
+planned_preload(const nir_intrinsic_instr *intr, const pco_common_data *common)
+{
+   unsigned offset;
+   if ((intr->intrinsic != nir_intrinsic_load_ubo &&
+        intr->intrinsic != nir_intrinsic_load_ssbo) ||
+       intr->def.bit_size != 32 ||
+       !buffer_load_const_offset(nir_get_scalar(intr->src[1].ssa, 0), &offset) ||
+       offset % sizeof(uint32_t)) {
+      return NULL;
+   }
+
+   unsigned desc_set;
+   unsigned binding;
+   if (!buffer_load_binding(intr, &desc_set, &binding))
+      return NULL;
+
+   unsigned end = offset / sizeof(uint32_t) + intr->def.num_components;
+   for (unsigned u = 0; u < common->ubo_preload_count; ++u) {
+      const pco_ubo_preload *preload = &common->ubo_preloads[u];
+      if (preload->desc_set == desc_set && preload->binding == binding)
+         return end <= preload->range.count ? preload : NULL;
+   }
+
+   return NULL;
+}
+
+static bool is_planned_preload(const nir_intrinsic_instr *intr,
+                               const void *data)
+{
+   const pco_common_data *common = data;
+
+   /* The size of a null descriptor reads as zero. */
+   if (intr->intrinsic == nir_intrinsic_get_ubo_size ||
+       intr->intrinsic == nir_intrinsic_get_ssbo_size) {
+      unsigned desc_set;
+      unsigned binding;
+      if (!buffer_load_binding(intr, &desc_set, &binding))
+         return false;
+
+      for (unsigned u = 0; u < common->ubo_preload_count; ++u) {
+         const pco_ubo_preload *preload = &common->ubo_preloads[u];
+         if (preload->desc_set == desc_set && preload->binding == binding)
+            return preload->range.count > 0;
+      }
+
+      return false;
+   }
+
+   return planned_preload(intr, common);
+}
+
+/* The descriptor upload program only preloads the bound range of a buffer,
+ * so with robust buffer access, a preloaded dword past it reads as zero.
+ */
+static bool bound_planned_preloads_pass(struct nir_builder *b,
+                                        nir_intrinsic_instr *intr,
+                                        void *cb_data)
+{
+   const pco_common_data *common = cb_data;
+
+   if (!planned_preload(intr, common))
+      return false;
+
+   unsigned offset;
+   ASSERTED bool is_const =
+      buffer_load_const_offset(nir_get_scalar(intr->src[1].ssa, 0), &offset);
+   assert(is_const);
+
+   b->cursor = nir_after_instr(&intr->instr);
+
+   nir_def *size = intr->intrinsic == nir_intrinsic_load_ubo
+                      ? nir_get_ubo_size(b, 32, intr->src[0].ssa)
+                      : nir_get_ssbo_size(b, 32, intr->src[0].ssa);
+
+   nir_def *zero = nir_imm_int(b, 0);
+   nir_def *comps[NIR_MAX_VEC_COMPONENTS];
+   for (unsigned c = 0; c < intr->def.num_components; ++c) {
+      unsigned end = offset + (c + 1) * sizeof(uint32_t);
+      comps[c] = nir_bcsel(b,
+                           nir_uge_imm(b, size, end),
+                           nir_channel(b, &intr->def, c),
+                           zero);
+   }
+
+   nir_def *bounded = nir_vec(b, comps, intr->def.num_components);
+   nir_def_rewrite_uses_after(&intr->def, bounded);
+   return true;
+}
+
+static bool plan_ubo_preloads_pass(struct nir_builder *b,
+                                   nir_intrinsic_instr *intr,
+                                   void *cb_data)
+{
+   pco_common_data *common = cb_data;
+
+   unsigned offset;
+   if (!is_preload_candidate(b->shader, intr) || intr->def.bit_size != 32 ||
+       !buffer_load_const_offset(nir_get_scalar(intr->src[1].ssa, 0), &offset) ||
+       offset % sizeof(uint32_t)) {
+      return false;
+   }
+
+   unsigned desc_set;
+   unsigned binding;
+   if (!buffer_load_binding(intr, &desc_set, &binding))
+      return false;
+
+   const pco_descriptor_set_data *desc_set_data = &common->desc_sets[desc_set];
+   if (binding >= desc_set_data->binding_count ||
+       !desc_set_data->bindings[binding].preloadable) {
+      return false;
+   }
+
+   unsigned end = offset / sizeof(uint32_t) + intr->def.num_components;
+   add_ubo_preload_load(common, desc_set, binding, end);
+   return false;
+}
+
+/* Sizes the preloads before the robustness lowerings, so that they can leave
+ * the loads served from shared registers alone: the descriptor upload program
+ * preloads zeros for a null descriptor or a buffer smaller than the preload.
+ */
+static void plan_ubo_preloads(nir_shader *nir, pco_common_data *common)
+{
+   nir_shader_intrinsics_pass(nir,
+                              plan_ubo_preloads_pass,
+                              nir_metadata_all,
+                              common);
+
+   unsigned budget = common->ubo_preload_budget;
+   for (unsigned u = 0; u < common->ubo_preload_count; ++u) {
+      pco_ubo_preload *preload = &common->ubo_preloads[u];
+      preload->range.count = MIN2(preload->used, budget);
+      budget -= preload->range.count;
+   }
+
+   common->ubo_preloads_planned = true;
+}
+
 static void gather_common_store_data(const nir_shader *shader,
                                      nir_intrinsic_instr *intr,
                                      pco_common_data *common)
@@ -428,17 +658,9 @@ static void gather_common_store_data(const nir_shader *shader,
       break;
 
    case nir_intrinsic_load_ubo:
-      gather_ubo_preload_data(intr, common);
-      return;
-
-   /* A storage buffer the shader never writes can only change between
-    * draws, like a uniform buffer.
-    */
    case nir_intrinsic_load_ssbo:
-      if (!shader->info.writes_memory &&
-          !(nir_intrinsic_access(intr) & (ACCESS_VOLATILE | ACCESS_COHERENT))) {
+      if (!common->ubo_preloads_planned && is_preload_candidate(shader, intr))
          gather_ubo_preload_data(intr, common);
-      }
       return;
 
    default:
@@ -1036,12 +1258,17 @@ static bool robustness_filter(const nir_intrinsic_instr *intr, const void *data)
 
    switch (intr->intrinsic) {
    case nir_intrinsic_load_ssbo:
+      return !planned_preload(intr, common);
+
    case nir_intrinsic_store_ssbo:
    case nir_intrinsic_ssbo_atomic:
    case nir_intrinsic_ssbo_atomic_swap:
       return true;
 
    case nir_intrinsic_load_ubo: {
+      if (planned_preload(intr, common))
+         return false;
+
       nir_scalar scalar = nir_scalar_resolved(intr->src[0].ssa, 0);
       nir_intrinsic_instr *load_vk_desc = nir_scalar_as_intrinsic(scalar);
       assert(load_vk_desc->intrinsic == nir_intrinsic_load_vulkan_descriptor);
@@ -1168,6 +1395,20 @@ void pco_lower_nir(pco_ctx *ctx, nir_shader *nir, pco_data *data)
             NULL,
             NULL);
 
+   if (data->common.robust_buffer_access || data->common.null_descriptor) {
+      NIR_PASS(_, nir, nir_opt_constant_folding);
+      plan_ubo_preloads(nir, &data->common);
+
+      if (data->common.robust_buffer_access) {
+         NIR_PASS(_,
+                  nir,
+                  nir_shader_intrinsics_pass,
+                  bound_planned_preloads_pass,
+                  nir_metadata_control_flow,
+                  &data->common);
+      }
+   }
+
    if (data->common.robust_buffer_access) {
       NIR_PASS(_,
                nir,
@@ -1188,7 +1429,9 @@ void pco_lower_nir(pco_ctx *ctx, nir_shader *nir, pco_data *data)
       NIR_PASS(_,
                nir,
                pco_nir_lower_null_descriptors,
-               pco_nir_lower_null_descriptor_all);
+               pco_nir_lower_null_descriptor_all,
+               is_planned_preload,
+               &data->common);
    }
 
    NIR_PASS(_, nir, pco_nir_lower_vk, data);

@@ -1876,7 +1876,9 @@ typedef enum {
 
 bool pco_nir_lower_null_descriptors(
    nir_shader *shader,
-   pco_nir_lower_null_descriptor_options options);
+   pco_nir_lower_null_descriptor_options options,
+   nir_intrin_filter_cb skip,
+   const void *skip_data);
 
 /**
  * \brief Returns the PCO bits for a bit size.

@@ -2556,8 +2556,20 @@ static void pvr_init_descriptors(pco_data *data,
 
          binding_data->is_inline_ubo = layout_binding->type ==
                                        VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK;
+
+         binding_data->preloadable =
+            (layout_binding->type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER ||
+             layout_binding->type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER ||
+             layout_binding->type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC ||
+             layout_binding->type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC) &&
+            !(layout_binding->flags & VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT);
       }
    }
+
+   data->common.ubo_preload_budget = nir->info.stage == MESA_SHADER_VERTEX ||
+                                           nir->info.stage == MESA_SHADER_FRAGMENT
+                                        ? PVR_UBO_PRELOAD_MAX_DWORDS
+                                        : 0;
 }
 
 static void pvr_setup_descriptors(pco_data *data,
@@ -2697,22 +2709,18 @@ static void pvr_setup_descriptors(pco_data *data,
     * pay for it.
     */
    const bool fragment = stage == MESA_SHADER_FRAGMENT;
-   unsigned ubo_preload_budget =
-      stage == MESA_SHADER_VERTEX || fragment ? PVR_UBO_PRELOAD_MAX_DWORDS : 0;
+   unsigned ubo_preload_budget = data->common.ubo_preload_budget;
    for (unsigned u = 0; u < data->common.ubo_preload_count; ++u) {
       pco_ubo_preload *preload = &data->common.ubo_preloads[u];
-      const struct pvr_descriptor_set_layout *set_layout =
-         vk_to_pvr_descriptor_set_layout(layout->set_layouts[preload->desc_set]);
-      const struct pvr_descriptor_set_layout_binding *layout_binding =
-         &set_layout->bindings[preload->binding];
-      const unsigned count = MIN2(preload->used, ubo_preload_budget);
+      const pco_binding_data *binding_data =
+         &data->common.desc_sets[preload->desc_set].bindings[preload->binding];
+      const unsigned count = data->common.ubo_preloads_planned
+                                ? preload->range.count
+                                : MIN2(preload->used, ubo_preload_budget);
 
-      if (data->common.robust_buffer_access || !count ||
-          (fragment && preload->loads < PVR_FS_PRELOAD_MIN_LOADS) ||
-          (layout_binding->type != VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER &&
-           layout_binding->type != VK_DESCRIPTOR_TYPE_STORAGE_BUFFER) ||
-          (layout_binding->flags &
-           VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT)) {
+      if (!count || !binding_data->preloadable ||
+          (!data->common.ubo_preloads_planned && fragment &&
+           preload->loads < PVR_FS_PRELOAD_MIN_LOADS)) {
          continue;
       }
 

@@ -81,9 +81,22 @@ static nir_def *get_is_null(nir_builder *b,
    return NULL;
 }
 
+struct lower_state {
+   pco_nir_lower_null_descriptor_options options;
+   nir_intrin_filter_cb skip;
+   const void *skip_data;
+};
+
 static bool lower(nir_builder *b, nir_instr *instr, void *data)
 {
-   pco_nir_lower_null_descriptor_options *options = data;
+   const struct lower_state *state = data;
+   const pco_nir_lower_null_descriptor_options *options = &state->options;
+
+   if (state->skip && instr->type == nir_instr_type_intrinsic &&
+       state->skip(nir_instr_as_intrinsic(instr), state->skip_data)) {
+      return false;
+   }
+
    b->cursor = nir_before_instr(instr);
 
    nir_def *def;
@@ -122,10 +135,18 @@ static bool lower(nir_builder *b, nir_instr *instr, void *data)
 
 bool pco_nir_lower_null_descriptors(
    nir_shader *shader,
-   pco_nir_lower_null_descriptor_options options)
+   pco_nir_lower_null_descriptor_options options,
+   nir_intrin_filter_cb skip,
+   const void *skip_data)
 {
+   struct lower_state state = {
+      .options = options,
+      .skip = skip,
+      .skip_data = skip_data,
+   };
+
    return nir_shader_instructions_pass(shader,
                                        lower,
                                        nir_metadata_none,
-                                       &options);
+                                       &state);
 }
